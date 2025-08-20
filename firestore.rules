@@ -1,0 +1,122 @@
+rules_version='2'
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && getUserData().role == 'admin';
+    }
+    
+    function isApprovedUser() {
+      return isAuthenticated() && getUserData().status == 'approved';
+    }
+    
+    function isAdminOrOwner(userId) {
+      return isAdmin() || request.auth.uid == userId;
+    }
+
+    // Users collection
+    match /users/{userId} {
+      // Users can read their own data, admins can read all
+      allow read: if isAdminOrOwner(userId);
+      
+      // Allow authenticated users to create their own user document
+      // Special case: allow admin user creation during setup
+      allow create: if isAuthenticated() && request.auth.uid == userId && (
+        (request.resource.data.role == 'user' && request.resource.data.status == 'pending') ||
+        (request.resource.data.role == 'admin' && request.resource.data.status == 'approved' && 
+         request.resource.data.email == 'hashimosman@synergyhomecare.com')
+      );
+      
+      // Admins can update any user, users can update their own limited fields
+      allow update: if isAdmin() || 
+        (request.auth.uid == userId && 
+         !('role' in request.resource.data.diff(resource.data).affectedKeys()) &&
+         !('status' in request.resource.data.diff(resource.data).affectedKeys()));
+      
+      // Only admins can delete users
+      allow delete: if isAdmin();
+    }
+
+    // User actions (audit log)
+    match /userActions/{actionId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update, delete: if false; // Audit logs should be immutable
+    }
+
+    // Calendar events
+    match /calendarEvents/{eventId} {
+      allow read: if isApprovedUser();
+      allow write: if isAdmin();
+    }
+
+    // Announcements/Updates
+    match /announcements/{announcementId} {
+      allow read: if isApprovedUser();
+      allow write: if isAdmin();
+    }
+
+    // Resources
+    match /resources/{resourceId} {
+      allow read: if isApprovedUser();
+      allow write: if isAdmin();
+    }
+
+    // Questions
+    match /questions/{questionId} {
+      allow read: if isApprovedUser();
+      allow create: if isApprovedUser() && request.auth.uid == request.resource.data.author;
+      allow update: if isAdmin() || 
+        (isApprovedUser() && request.auth.uid == resource.data.author);
+      allow delete: if isAdmin();
+    }
+
+    // Answers (subcollection of questions)
+    match /questions/{questionId}/answers/{answerId} {
+      allow read: if isApprovedUser();
+      allow create: if isApprovedUser() && request.auth.uid == request.resource.data.author;
+      allow update: if isAdmin() || 
+        (isApprovedUser() && request.auth.uid == resource.data.author);
+      allow delete: if isAdmin();
+    }
+
+    // Complaints
+    match /complaints/{complaintId} {
+      allow read: if isAdmin() || 
+        (isApprovedUser() && request.auth.uid == resource.data.submittedBy);
+      allow create: if isApprovedUser() && request.auth.uid == request.resource.data.submittedBy;
+      allow update: if isAdmin() || 
+        (isApprovedUser() && request.auth.uid == resource.data.submittedBy && 
+         resource.data.status == 'submitted');
+      allow delete: if isAdmin();
+    }
+
+    // Documents
+    match /documents/{documentId} {
+      allow read: if isApprovedUser();
+      allow write: if isAdmin();
+    }
+
+    // User document completions/status
+    match /userDocuments/{userDocId} {
+      allow read: if isAdmin() || 
+        (isApprovedUser() && request.auth.uid == resource.data.userId);
+      allow write: if isAdmin() || 
+        (isApprovedUser() && request.auth.uid == request.resource.data.userId);
+    }
+
+    // Block access to all other collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
