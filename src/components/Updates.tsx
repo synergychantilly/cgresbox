@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   MegaphoneIcon,
   ExclamationTriangleIcon,
@@ -7,65 +7,82 @@ import {
   FunnelIcon,
   MagnifyingGlassIcon,
   PlusIcon,
+  PencilIcon,
+  TrashIcon,
+  EyeIcon,
 } from '@heroicons/react/24/outline';
-import { Announcement } from '../types';
+import { Update } from '../types/updates';
 import { useAuth } from '../contexts/AuthContext';
+import { subscribeToAllUpdates, deleteUpdate } from '../lib/updatesService';
 import AddUpdateModal from './modals/AddUpdateModal';
-
-// Empty array - announcements will be loaded from Firebase
-const mockAnnouncements: Announcement[] = [];
+import EditUpdateModal from './modals/EditUpdateModal';
+import ViewUpdateModal from './modals/ViewUpdateModal';
 
 export default function Updates() {
   const { isAdmin } = useAuth();
-  const [announcements] = useState<Announcement[]>(mockAnnouncements);
-  const [filter, setFilter] = useState<'all' | 'unread' | 'urgent' | 'info' | 'warning' | 'celebration'>('all');
+  const [updates, setUpdates] = useState<Update[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState<'all' | 'active' | 'News' | 'Update' | 'Article' | 'Activity'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showViewModal, setShowViewModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [selectedUpdate, setSelectedUpdate] = useState<Update | null>(null);
 
-  const getAnnouncementIcon = (type: string) => {
+  // Load updates from Firebase
+  useEffect(() => {
+    const unsubscribe = subscribeToAllUpdates((updatesData) => {
+      setUpdates(updatesData);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const getUpdateIcon = (type: string) => {
     switch (type) {
-      case 'urgent':
-        return <ExclamationTriangleIcon className="h-6 w-6" />;
-      case 'warning':
-        return <ExclamationTriangleIcon className="h-6 w-6" />;
-      case 'info':
+      case 'News':
+        return <MegaphoneIcon className="h-6 w-6" />;
+      case 'Update':
         return <InformationCircleIcon className="h-6 w-6" />;
-      case 'celebration':
+      case 'Article':
         return <StarIcon className="h-6 w-6" />;
+      case 'Activity':
+        return <ExclamationTriangleIcon className="h-6 w-6" />;
       default:
         return <MegaphoneIcon className="h-6 w-6" />;
     }
   };
 
-  const getAnnouncementColor = (type: string) => {
+  const getUpdateColor = (type: string) => {
     switch (type) {
-      case 'urgent':
+      case 'News':
         return {
-          bg: 'bg-destructive-50',
-          border: 'border-destructive-200',
-          icon: 'text-destructive-600',
-          badge: 'bg-destructive-100 text-destructive-700'
+          bg: 'bg-blue-50',
+          border: 'border-blue-200',
+          icon: 'text-blue-600',
+          badge: 'bg-blue-100 text-blue-700'
         };
-      case 'warning':
+      case 'Update':
         return {
-          bg: 'bg-accent-50',
-          border: 'border-accent-200',
-          icon: 'text-accent-600',
-          badge: 'bg-accent-100 text-accent-700'
+          bg: 'bg-green-50',
+          border: 'border-green-200',
+          icon: 'text-green-600',
+          badge: 'bg-green-100 text-green-700'
         };
-      case 'info':
+      case 'Article':
         return {
-          bg: 'bg-primary-50',
-          border: 'border-primary-200',
-          icon: 'text-primary-600',
-          badge: 'bg-primary-100 text-primary-700'
+          bg: 'bg-purple-50',
+          border: 'border-purple-200',
+          icon: 'text-purple-600',
+          badge: 'bg-purple-100 text-purple-700'
         };
-      case 'celebration':
+      case 'Activity':
         return {
-          bg: 'bg-secondary-50',
-          border: 'border-secondary-200',
-          icon: 'text-secondary-600',
-          badge: 'bg-secondary-100 text-secondary-700'
+          bg: 'bg-orange-50',
+          border: 'border-orange-200',
+          icon: 'text-orange-600',
+          badge: 'bg-orange-100 text-orange-700'
         };
       default:
         return {
@@ -77,21 +94,51 @@ export default function Updates() {
     }
   };
 
-  const filteredAnnouncements = announcements
-    .filter(announcement => {
+  const filteredUpdates = updates
+    .filter(update => {
       if (filter === 'all') return true;
-      if (filter === 'unread') return !announcement.isRead;
-      return announcement.type === filter;
+      if (filter === 'active') return update.isActive;
+      return update.type === filter;
     })
-    .filter(announcement => {
+    .filter(update => {
       if (!searchTerm) return true;
-      return announcement.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-             announcement.content.toLowerCase().includes(searchTerm.toLowerCase());
+      return update.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+             update.description.toLowerCase().includes(searchTerm.toLowerCase());
     })
-    .sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
-  const unreadCount = announcements.filter(a => !a.isRead).length;
-  const urgentCount = announcements.filter(a => a.type === 'urgent').length;
+  const activeCount = updates.filter(u => u.isActive).length;
+  const inactiveCount = updates.filter(u => !u.isActive).length;
+
+  // Handler functions
+  const handleViewUpdate = (update: Update) => {
+    setSelectedUpdate(update);
+    setShowViewModal(true);
+  };
+
+  const handleEditUpdate = (update: Update) => {
+    setSelectedUpdate(update);
+    setShowEditModal(true);
+  };
+
+  const handleDeleteUpdate = async (update: Update) => {
+    if (!confirm(`Are you sure you want to delete "${update.title}"?`)) {
+      return;
+    }
+
+    try {
+      await deleteUpdate(update.id);
+    } catch (error) {
+      console.error('Error deleting update:', error);
+      alert('Failed to delete update. Please try again.');
+    }
+  };
+
+  const closeModals = () => {
+    setShowViewModal(false);
+    setShowEditModal(false);
+    setSelectedUpdate(null);
+  };
 
   const formatDate = (date: Date) => {
     const now = new Date();
@@ -117,18 +164,17 @@ export default function Updates() {
           <h1 className="text-3xl font-bold text-gray-900">Updates & Announcements</h1>
           <p className="text-lg text-gray-600">
             Stay informed with the latest news and important notices
-            {unreadCount > 0 && (
-              <span className="ml-2 inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold bg-destructive-100 text-destructive-700">
-                {unreadCount} unread
+            {!loading && (
+              <span className="ml-2 text-sm text-gray-500">
+                ({activeCount} active, {inactiveCount} expired)
               </span>
             )}
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
-          {urgentCount > 0 && (
-            <span className="inline-flex items-center px-4 py-2 rounded-lg text-sm font-semibold bg-destructive-100 text-destructive-700 animate-pulse">
-              <ExclamationTriangleIcon className="h-4 w-4 mr-2" />
-              {urgentCount} Urgent
+          {loading && (
+            <span className="inline-flex items-center px-4 py-2 rounded-lg text-sm font-semibold bg-gray-100 text-gray-700">
+              Loading...
             </span>
           )}
           {isAdmin && (
@@ -168,30 +214,36 @@ export default function Updates() {
               className="appearance-none bg-white border border-gray-300 rounded-lg px-4 py-3 pr-8 text-lg focus:ring-2 focus:ring-primary focus:border-primary focus:outline-none"
             >
               <option value="all">All Updates</option>
-              <option value="unread">Unread ({unreadCount})</option>
-              <option value="urgent">Urgent</option>
-              <option value="warning">Warnings</option>
-              <option value="info">Information</option>
-              <option value="celebration">Celebrations</option>
+              <option value="active">Active ({activeCount})</option>
+              <option value="News">News</option>
+              <option value="Update">Updates</option>
+              <option value="Article">Articles</option>
+              <option value="Activity">Activities</option>
             </select>
             <FunnelIcon className="absolute right-2 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400 pointer-events-none" />
           </div>
         </div>
       </div>
 
-      {/* Announcements List */}
+      {/* Updates List */}
       <div className="space-y-4">
-        {filteredAnnouncements.length > 0 ? (
-          filteredAnnouncements.map((announcement) => {
-            const colors = getAnnouncementColor(announcement.type);
-            const Icon = getAnnouncementIcon(announcement.type);
+        {loading ? (
+          <div className="card text-center py-12">
+            <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full mx-auto mb-4"></div>
+            <p className="text-gray-600">Loading updates...</p>
+          </div>
+        ) : filteredUpdates.length > 0 ? (
+          filteredUpdates.map((update) => {
+            const colors = getUpdateColor(update.type);
+            const Icon = getUpdateIcon(update.type);
 
             return (
               <div
-                key={announcement.id}
+                key={update.id}
                 className={`card ${colors.bg} ${colors.border} ${
-                  !announcement.isRead ? 'ring-2 ring-primary-200 shadow-lg' : ''
-                } hover:shadow-lg transition-all duration-200`}
+                  !update.isActive ? 'opacity-75' : ''
+                } hover:shadow-lg transition-all duration-200 cursor-pointer`}
+                onClick={() => handleViewUpdate(update)}
               >
                 <div className="flex items-start gap-4">
                   <div className={`p-3 rounded-lg bg-white ${colors.icon} shadow-sm`}>
@@ -202,46 +254,73 @@ export default function Updates() {
                     <div className="flex items-start justify-between gap-4 mb-3">
                       <div className="flex-1">
                         <div className="flex items-center gap-3 mb-2">
-                          <h3 className={`text-xl font-bold text-gray-900 ${
-                            !announcement.isRead ? 'font-extrabold' : ''
-                          }`}>
-                            {announcement.title}
+                          <h3 className="text-xl font-bold text-gray-900">
+                            {update.title}
                           </h3>
-                          {!announcement.isRead && (
-                            <span className="inline-block w-3 h-3 bg-primary-500 rounded-full"></span>
+                          {!update.isActive && (
+                            <span className="inline-flex items-center px-2 py-1 text-xs font-medium bg-gray-100 text-gray-600 rounded-full">
+                              Expired
+                            </span>
                           )}
                         </div>
                         <div className="flex items-center gap-4 text-sm text-gray-600 mb-3">
                           <span className={`px-3 py-1 rounded-full text-xs font-semibold ${colors.badge}`}>
-                            {announcement.type.toUpperCase()}
+                            {update.type.toUpperCase()}
                           </span>
-                          <span>By {announcement.author}</span>
-                          <span>{formatDate(announcement.publishedAt)}</span>
+                          <span>{formatDate(update.createdAt)}</span>
+                          {update.expiration && (
+                            <span className="text-xs text-gray-500">
+                              Expires: {update.expiration.toLocaleDateString()}
+                            </span>
+                          )}
                         </div>
                       </div>
+                      
+                      {/* Admin Action Buttons */}
+                      {isAdmin && (
+                        <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={() => handleViewUpdate(update)}
+                            className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                            title="View"
+                          >
+                            <EyeIcon className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => handleEditUpdate(update)}
+                            className="p-2 text-gray-500 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                            title="Edit"
+                          >
+                            <PencilIcon className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteUpdate(update)}
+                            className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Delete"
+                          >
+                            <TrashIcon className="h-4 w-4" />
+                          </button>
+                        </div>
+                      )}
                     </div>
                     
                     <div className="prose prose-gray max-w-none">
-                      <p className="text-gray-800 leading-relaxed">
-                        {announcement.content}
-                      </p>
+                      <div 
+                        className="text-gray-800 leading-relaxed overflow-hidden"
+                        style={{ 
+                          display: '-webkit-box',
+                          WebkitLineClamp: 3,
+                          WebkitBoxOrient: 'vertical'
+                        }}
+                        dangerouslySetInnerHTML={{ __html: update.description }}
+                      />
                     </div>
-
-                    {announcement.attachments && announcement.attachments.length > 0 && (
-                      <div className="mt-4 pt-4 border-t border-gray-200">
-                        <h4 className="text-sm font-semibold text-gray-700 mb-2">Attachments:</h4>
-                        <div className="flex flex-wrap gap-2">
-                          {announcement.attachments.map((attachment, index) => (
-                            <span
-                              key={index}
-                              className="inline-flex items-center px-3 py-1 bg-white text-primary-700 text-sm rounded-lg border border-primary-200 hover:bg-primary-50 cursor-pointer transition-colors"
-                            >
-                              📎 {attachment}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
+                    
+                    {/* Click to view indicator */}
+                    <div className="mt-3 text-sm text-gray-500 flex items-center gap-2">
+                      <EyeIcon className="h-4 w-4" />
+                      <span>Click to view full update</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -250,7 +329,7 @@ export default function Updates() {
         ) : (
           <div className="card text-center py-12">
             <MegaphoneIcon className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-xl font-semibold text-gray-900 mb-2">No announcements found</h3>
+            <h3 className="text-xl font-semibold text-gray-900 mb-2">No updates found</h3>
             <p className="text-gray-600">
               {searchTerm
                 ? 'Try adjusting your search terms or filters.'
@@ -260,29 +339,29 @@ export default function Updates() {
         )}
       </div>
 
-      {/* Mark All as Read */}
-      {unreadCount > 0 && (
-        <div className="card bg-primary-50 border-primary-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-semibold text-primary-900">Mark all as read</h3>
-              <p className="text-primary-700">You have {unreadCount} unread announcements</p>
-            </div>
-            <button className="btn-primary">
-              Mark All Read
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Add Update Modal */}
       <AddUpdateModal
         isOpen={showAddModal}
         onClose={() => setShowAddModal(false)}
         onSuccess={() => {
-          // Refresh updates here if you implement real-time loading
-          console.log('Update created successfully');
+          // Updates will refresh automatically via real-time subscription
+          setShowAddModal(false);
         }}
+      />
+
+      {/* View Update Modal */}
+      <ViewUpdateModal
+        isOpen={showViewModal}
+        onClose={closeModals}
+        update={selectedUpdate}
+      />
+
+      {/* Edit Update Modal */}
+      <EditUpdateModal
+        isOpen={showEditModal}
+        onClose={closeModals}
+        onSuccess={closeModals}
+        update={selectedUpdate}
       />
     </div>
   );

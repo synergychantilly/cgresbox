@@ -1,14 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { XMarkIcon } from '@heroicons/react/24/outline';
-import { createUpdate } from '../../lib/updatesService';
-import { UpdateType } from '../../types/updates';
+import { updateUpdate } from '../../lib/updatesService';
+import { Update, UpdateType } from '../../types/updates';
 import { useAuth } from '../../contexts/AuthContext';
 import RichTextEditor from '../RichTextEditor';
 
-interface AddUpdateModalProps {
+interface EditUpdateModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
+  update: Update | null;
 }
 
 interface UpdateForm {
@@ -19,8 +20,8 @@ interface UpdateForm {
   hasExpiration: boolean;
 }
 
-export default function AddUpdateModal({ isOpen, onClose, onSuccess }: AddUpdateModalProps) {
-  const { currentUser } = useAuth();
+export default function EditUpdateModal({ isOpen, onClose, onSuccess, update }: EditUpdateModalProps) {
+  const { currentUser, isAdmin } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [formData, setFormData] = useState<UpdateForm>({
     title: '',
@@ -30,9 +31,22 @@ export default function AddUpdateModal({ isOpen, onClose, onSuccess }: AddUpdate
     hasExpiration: false
   });
 
+  // Load update data when modal opens
+  useEffect(() => {
+    if (update && isOpen) {
+      setFormData({
+        title: update.title,
+        type: update.type,
+        description: update.description,
+        expiration: update.expiration ? update.expiration.toISOString().slice(0, 16) : '',
+        hasExpiration: !!update.expiration
+      });
+    }
+  }, [update, isOpen]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!currentUser) return;
+    if (!currentUser || !isAdmin || !update) return;
 
     setIsLoading(true);
     try {
@@ -45,24 +59,18 @@ export default function AddUpdateModal({ isOpen, onClose, onSuccess }: AddUpdate
       // Add expiration if set
       if (formData.hasExpiration && formData.expiration) {
         updateData.expiration = new Date(formData.expiration);
+      } else if (!formData.hasExpiration) {
+        // Remove expiration if unchecked
+        updateData.expiration = null;
       }
 
-      await createUpdate(updateData, currentUser.uid);
-
-      // Reset form and close modal
-      setFormData({
-        title: '',
-        type: 'News',
-        description: '',
-        expiration: '',
-        hasExpiration: false
-      });
+      await updateUpdate(update.id, updateData);
       
       onSuccess?.();
       onClose();
     } catch (error) {
-      console.error('Error creating update:', error);
-      alert('Failed to create update. Please try again.');
+      console.error('Error updating update:', error);
+      alert('Failed to update announcement. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -75,7 +83,7 @@ export default function AddUpdateModal({ isOpen, onClose, onSuccess }: AddUpdate
     }));
   };
 
-  if (!isOpen) return null;
+  if (!isOpen || !update || !isAdmin) return null;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
@@ -83,7 +91,7 @@ export default function AddUpdateModal({ isOpen, onClose, onSuccess }: AddUpdate
         <div className="p-6">
           {/* Header */}
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-2xl font-bold text-gray-900">Add Update</h2>
+            <h2 className="text-2xl font-bold text-gray-900">Edit Update</h2>
             <button
               onClick={onClose}
               className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
@@ -193,7 +201,7 @@ export default function AddUpdateModal({ isOpen, onClose, onSuccess }: AddUpdate
                 className="btn-primary"
                 disabled={isLoading}
               >
-                {isLoading ? 'Creating...' : 'Create Update'}
+                {isLoading ? 'Updating...' : 'Update Announcement'}
               </button>
             </div>
           </form>
