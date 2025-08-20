@@ -306,7 +306,7 @@ export default function Updates() {
                     
                     <div className="prose prose-gray max-w-none">
                       <div 
-                        className="text-gray-800 leading-relaxed overflow-hidden"
+                        className="text-gray-800 leading-relaxed overflow-hidden update-content-preview"
                         style={{ 
                           display: '-webkit-box',
                           WebkitLineClamp: 3,
@@ -363,6 +363,67 @@ export default function Updates() {
         onSuccess={closeModals}
         update={selectedUpdate}
       />
+      
+      <style dangerouslySetInnerHTML={{
+        __html: `
+          .update-content-preview ul {
+            list-style-type: disc;
+            margin: 0.5em 0;
+            padding-left: 2em;
+          }
+          
+          .update-content-preview ol {
+            list-style-type: decimal;
+            margin: 0.5em 0;
+            padding-left: 2em;
+          }
+          
+          .update-content-preview li {
+            display: list-item;
+            margin: 0.25em 0;
+          }
+          
+          .update-content-preview h1, 
+          .update-content-preview h2, 
+          .update-content-preview h3 {
+            font-weight: bold;
+            margin: 0.25em 0;
+          }
+          
+          .update-content-preview h1 {
+            font-size: 1.25em;
+          }
+          
+          .update-content-preview h2 {
+            font-size: 1.125em;
+          }
+          
+          .update-content-preview h3 {
+            font-size: 1.0625em;
+          }
+          
+          .update-content-preview p {
+            margin: 0.25em 0;
+          }
+          
+          .update-content-preview a {
+            color: #2563eb;
+            text-decoration: underline;
+          }
+          
+          .update-content-preview strong {
+            font-weight: bold;
+          }
+          
+          .update-content-preview em {
+            font-style: italic;
+          }
+          
+          .update-content-preview u {
+            text-decoration: underline;
+          }
+        `
+      }} />
     </div>
   );
 }

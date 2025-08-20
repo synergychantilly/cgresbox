@@ -231,13 +231,21 @@ export default function RichTextEditor({
             margin: 0.5em 0;
           }
           
-          .rich-text-editor [contenteditable] ul, .rich-text-editor [contenteditable] ol {
+          .rich-text-editor [contenteditable] ul {
             margin: 0.5em 0;
             padding-left: 2em;
+            list-style-type: disc;
+          }
+          
+          .rich-text-editor [contenteditable] ol {
+            margin: 0.5em 0;
+            padding-left: 2em;
+            list-style-type: decimal;
           }
           
           .rich-text-editor [contenteditable] li {
             margin: 0.25em 0;
+            display: list-item;
           }
           
           .rich-text-editor [contenteditable] a {

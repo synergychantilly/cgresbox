@@ -73,12 +73,75 @@ export default function ViewUpdateModal({ isOpen, onClose, update }: ViewUpdateM
           </div>
 
           {/* Content */}
-          <div className="prose prose-lg max-w-none">
-            <div 
-              className="text-gray-800 leading-relaxed"
-              dangerouslySetInnerHTML={{ __html: update.description }}
-            />
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+            <h4 className="text-sm font-semibold text-gray-700 mb-3">Description</h4>
+            <div className="prose prose-sm max-w-none">
+              <div 
+                className="text-gray-700 leading-relaxed text-sm update-content"
+                dangerouslySetInnerHTML={{ __html: update.description }}
+              />
+            </div>
           </div>
+          
+          <style dangerouslySetInnerHTML={{
+            __html: `
+              .update-content ul {
+                list-style-type: disc;
+                margin: 0.5em 0;
+                padding-left: 2em;
+              }
+              
+              .update-content ol {
+                list-style-type: decimal;
+                margin: 0.5em 0;
+                padding-left: 2em;
+              }
+              
+              .update-content li {
+                display: list-item;
+                margin: 0.25em 0;
+              }
+              
+              .update-content h1 {
+                font-size: 1.5em;
+                font-weight: bold;
+                margin: 0.5em 0;
+              }
+              
+              .update-content h2 {
+                font-size: 1.25em;
+                font-weight: bold;
+                margin: 0.5em 0;
+              }
+              
+              .update-content h3 {
+                font-size: 1.125em;
+                font-weight: bold;
+                margin: 0.5em 0;
+              }
+              
+              .update-content p {
+                margin: 0.5em 0;
+              }
+              
+              .update-content a {
+                color: #2563eb;
+                text-decoration: underline;
+              }
+              
+              .update-content strong {
+                font-weight: bold;
+              }
+              
+              .update-content em {
+                font-style: italic;
+              }
+              
+              .update-content u {
+                text-decoration: underline;
+              }
+            `
+          }} />
 
           {/* Footer */}
           <div className="mt-8 pt-6 border-t border-gray-200">
