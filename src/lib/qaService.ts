@@ -1,80 +1,58 @@
 import { 
   collection, 
   doc, 
-  addDoc,
+  addDoc, 
   updateDoc, 
-  deleteDoc,
+  deleteDoc, 
   getDocs, 
   getDoc,
   query, 
   where, 
   orderBy, 
-  serverTimestamp,
-  onSnapshot,
+  limit,
+  serverTimestamp, 
+  arrayUnion, 
+  arrayRemove,
   increment,
-  arrayUnion,
-  arrayRemove
+  Timestamp
 } from 'firebase/firestore';
 import { db } from './firebase';
-import { 
-  Question, 
-  Answer, 
-  CreateQuestionData, 
-  UpdateQuestionData, 
-  CreateAnswerData, 
-  UpdateAnswerData,
-  VoteAnswerData 
-} from '../types/qa';
-import { getUserById, canUserAskQuestion, incrementUserQuestionCount } from './userService';
+import { Question, Answer, EditRequest, QANotification } from '../types';
 
-const QUESTIONS_COLLECTION = 'questions';
-const ANSWERS_COLLECTION = 'answers';
+// Collections
+const questionsRef = collection(db, 'questions');
+const answersRef = collection(db, 'answers');
+const editRequestsRef = collection(db, 'editRequests');
+const notificationsRef = collection(db, 'notifications');
 
-// Helper function to validate description length (max 150 words)
-const validateDescriptionWordCount = (description: string): boolean => {
-  const words = description.trim().split(/\s+/).filter(word => word.length > 0);
-  return words.length <= 150;
+// Helper function to convert Firestore timestamp to Date
+const convertTimestamp = (timestamp: any): Date => {
+  if (timestamp?.toDate) {
+    return timestamp.toDate();
+  }
+  return timestamp || new Date();
 };
 
-// Create a new question
-export const createQuestion = async (
-  questionData: CreateQuestionData, 
-  authorId: string
-): Promise<string> => {
+// Questions CRUD
+export const createQuestion = async (questionData: {
+  title: string;
+  content: string;
+  category: string;
+  tags: string[];
+  author: string;
+  authorName: string;
+  isAnonymous: boolean;
+}): Promise<string> => {
   try {
-    // Check if user can ask a question today
-    const canAsk = await canUserAskQuestion(authorId);
-    if (!canAsk) {
-      throw new Error('You have reached the daily question limit (1 question per day)');
-    }
-
-    // Validate description word count
-    if (!validateDescriptionWordCount(questionData.description)) {
-      throw new Error('Description must not exceed 150 words');
-    }
-
-    // Get user info for author name
-    const user = await getUserById(authorId);
-    if (!user) {
-      throw new Error('User not found');
-    }
-
-    const docData = {
+    const docRef = await addDoc(questionsRef, {
       ...questionData,
-      author: authorId,
-      authorName: user.name,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
-      answerCount: 0,
-      isResolved: false
-    };
-
-    const docRef = await addDoc(collection(db, QUESTIONS_COLLECTION), docData);
-
-    // Increment user's question count
-    await incrementUserQuestionCount(authorId);
-
-    console.log('Question created with ID:', docRef.id);
+      isAnswered: false,
+      upvotes: 0,
+      upvotedBy: [],
+      commentsDisabled: false
+    });
     return docRef.id;
   } catch (error) {
     console.error('Error creating question:', error);
@@ -82,240 +60,269 @@ export const createQuestion = async (
   }
 };
 
-// Update an existing question
-export const updateQuestion = async (
-  questionId: string, 
-  questionData: UpdateQuestionData,
-  userId: string
-): Promise<void> => {
+export const getQuestions = async (): Promise<Question[]> => {
   try {
-    // Validate description word count if description is being updated
-    if (questionData.description && !validateDescriptionWordCount(questionData.description)) {
-      throw new Error('Description must not exceed 150 words');
+    const q = query(questionsRef, orderBy('createdAt', 'desc'));
+    const querySnapshot = await getDocs(q);
+    
+    const questions: Question[] = [];
+    
+    for (const docSnap of querySnapshot.docs) {
+      const data = docSnap.data();
+      
+      try {
+        // Get answers for this question (simplified query without orderBy to avoid index requirement)
+        const answersQuery = query(
+          answersRef, 
+          where('questionId', '==', docSnap.id)
+        );
+        const answersSnapshot = await getDocs(answersQuery);
+        
+        const answers: Answer[] = answersSnapshot.docs.map(answerDoc => {
+          const answerData = answerDoc.data();
+          return {
+            id: answerDoc.id,
+            ...answerData,
+            createdAt: convertTimestamp(answerData.createdAt),
+            updatedAt: convertTimestamp(answerData.updatedAt)
+          } as Answer;
+        }).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()); // Sort in memory instead
+        
+        if (answers.length > 0) {
+          console.log(`Found ${answers.length} answers for question ${docSnap.id}:`, answers);
+        }
+        
+        questions.push({
+          id: docSnap.id,
+          ...data,
+          createdAt: convertTimestamp(data.createdAt),
+          updatedAt: convertTimestamp(data.updatedAt),
+          answers
+        } as Question);
+      } catch (answerError) {
+        // If we can't get answers, just add the question without answers
+        console.warn('Could not fetch answers for question:', docSnap.id, answerError);
+        questions.push({
+          id: docSnap.id,
+          ...data,
+          createdAt: convertTimestamp(data.createdAt),
+          updatedAt: convertTimestamp(data.updatedAt),
+          answers: []
+        } as Question);
+      }
     }
+    
+    return questions;
+  } catch (error) {
+    console.error('Error fetching questions:', error);
+    // Return empty array instead of throwing to prevent UI crashes
+    return [];
+  }
+};
 
-    // Check if user is the author or admin
-    const question = await getQuestionById(questionId);
-    if (!question) {
+export const getQuestionsByCategory = async (category: string): Promise<Question[]> => {
+  try {
+    const q = query(
+      questionsRef, 
+      where('category', '==', category),
+      orderBy('createdAt', 'desc')
+    );
+    const querySnapshot = await getDocs(q);
+    
+    const questions: Question[] = [];
+    
+    for (const docSnap of querySnapshot.docs) {
+      const data = docSnap.data();
+      
+      try {
+        // Get answers for this question (simplified query)
+        const answersQuery = query(
+          answersRef, 
+          where('questionId', '==', docSnap.id)
+        );
+        const answersSnapshot = await getDocs(answersQuery);
+        
+        const answers: Answer[] = answersSnapshot.docs.map(answerDoc => {
+          const answerData = answerDoc.data();
+          return {
+            id: answerDoc.id,
+            ...answerData,
+            createdAt: convertTimestamp(answerData.createdAt),
+            updatedAt: convertTimestamp(answerData.updatedAt)
+          } as Answer;
+        }).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+        
+        questions.push({
+          id: docSnap.id,
+          ...data,
+          createdAt: convertTimestamp(data.createdAt),
+          updatedAt: convertTimestamp(data.updatedAt),
+          answers
+        } as Question);
+      } catch (answerError) {
+        console.warn('Could not fetch answers for question:', docSnap.id, answerError);
+        questions.push({
+          id: docSnap.id,
+          ...data,
+          createdAt: convertTimestamp(data.createdAt),
+          updatedAt: convertTimestamp(data.updatedAt),
+          answers: []
+        } as Question);
+      }
+    }
+    
+    return questions;
+  } catch (error) {
+    console.error('Error fetching questions by category:', error);
+    return [];
+  }
+};
+
+export const upvoteQuestion = async (questionId: string, userId: string): Promise<void> => {
+  try {
+    const questionRef = doc(db, 'questions', questionId);
+    const questionDoc = await getDoc(questionRef);
+    
+    if (!questionDoc.exists()) {
       throw new Error('Question not found');
     }
-
-    const user = await getUserById(userId);
-    if (!user) {
-      throw new Error('User not found');
+    
+    const data = questionDoc.data();
+    const upvotedBy = data.upvotedBy || [];
+    
+    if (upvotedBy.includes(userId)) {
+      // Remove upvote
+      await updateDoc(questionRef, {
+        upvotes: increment(-1),
+        upvotedBy: arrayRemove(userId)
+      });
+    } else {
+      // Add upvote
+      await updateDoc(questionRef, {
+        upvotes: increment(1),
+        upvotedBy: arrayUnion(userId)
+      });
     }
-
-    // Only allow author or admin to update
-    if (question.author !== userId && user.role !== 'admin') {
-      throw new Error('Unauthorized to update this question');
-    }
-
-    const updateFields = {
-      ...questionData,
-      updatedAt: serverTimestamp()
-    };
-
-    await updateDoc(doc(db, QUESTIONS_COLLECTION, questionId), updateFields);
-    console.log('Question updated:', questionId);
   } catch (error) {
-    console.error('Error updating question:', error);
+    console.error('Error upvoting question:', error);
     throw error;
   }
 };
 
-// Delete a question and all its answers
-export const deleteQuestion = async (questionId: string, userId: string): Promise<void> => {
+export const deleteQuestion = async (questionId: string, adminId: string): Promise<void> => {
   try {
-    // Check permissions
-    const question = await getQuestionById(questionId);
-    if (!question) {
+    const questionRef = doc(db, 'questions', questionId);
+    const questionDoc = await getDoc(questionRef);
+    
+    if (!questionDoc.exists()) {
       throw new Error('Question not found');
     }
-
-    const user = await getUserById(userId);
-    if (!user) {
-      throw new Error('User not found');
-    }
-
-    // Only allow admin to delete questions
-    if (user.role !== 'admin') {
-      throw new Error('Only administrators can delete questions');
-    }
-
-    // Delete all answers first
-    const answers = await getAnswersByQuestionId(questionId);
-    for (const answer of answers) {
-      await deleteDoc(doc(db, QUESTIONS_COLLECTION, questionId, ANSWERS_COLLECTION, answer.id));
-    }
-
+    
+    const questionData = questionDoc.data();
+    
+    // Delete all answers for this question
+    const answersQuery = query(answersRef, where('questionId', '==', questionId));
+    const answersSnapshot = await getDocs(answersQuery);
+    
+    const deletePromises = answersSnapshot.docs.map(answerDoc => 
+      deleteDoc(doc(db, 'answers', answerDoc.id))
+    );
+    
+    await Promise.all(deletePromises);
+    
     // Delete the question
-    await deleteDoc(doc(db, QUESTIONS_COLLECTION, questionId));
-    console.log('Question and all answers deleted:', questionId);
+    await deleteDoc(questionRef);
+    
+    // Send notification to question author
+    if (!questionData.isAnonymous) {
+      await createNotification({
+        userId: questionData.author,
+        type: 'question_removed',
+        title: 'Question Removed',
+        message: `Your question "${questionData.title}" has been removed by an administrator.`,
+        questionId: questionId
+      });
+    }
   } catch (error) {
     console.error('Error deleting question:', error);
     throw error;
   }
 };
 
-// Get all questions
-export const getQuestions = async (): Promise<Question[]> => {
+export const toggleCommentsDisabled = async (questionId: string): Promise<void> => {
   try {
-    const q = query(
-      collection(db, QUESTIONS_COLLECTION),
-      orderBy('createdAt', 'desc')
-    );
+    const questionRef = doc(db, 'questions', questionId);
+    const questionDoc = await getDoc(questionRef);
     
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => {
-      const data = doc.data();
-      return {
-        id: doc.id,
-        question: data.question,
-        description: data.description,
-        author: data.author,
-        authorName: data.authorName,
-        createdAt: data.createdAt?.toDate() || new Date(),
-        updatedAt: data.updatedAt?.toDate() || new Date(),
-        answerCount: data.answerCount || 0,
-        isResolved: data.isResolved || false,
-        tags: data.tags || [],
-        category: data.category
-      } as Question;
-    });
-  } catch (error) {
-    console.error('Error fetching questions:', error);
-    throw error;
-  }
-};
-
-// Get questions by category
-export const getQuestionsByCategory = async (category: string): Promise<Question[]> => {
-  try {
-    const q = query(
-      collection(db, QUESTIONS_COLLECTION),
-      where('category', '==', category),
-      orderBy('createdAt', 'desc')
-    );
-    
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => {
-      const data = doc.data();
-      return {
-        id: doc.id,
-        question: data.question,
-        description: data.description,
-        author: data.author,
-        authorName: data.authorName,
-        createdAt: data.createdAt?.toDate() || new Date(),
-        updatedAt: data.updatedAt?.toDate() || new Date(),
-        answerCount: data.answerCount || 0,
-        isResolved: data.isResolved || false,
-        tags: data.tags || [],
-        category: data.category
-      } as Question;
-    });
-  } catch (error) {
-    console.error('Error fetching questions by category:', error);
-    throw error;
-  }
-};
-
-// Get unresolved questions
-export const getUnresolvedQuestions = async (): Promise<Question[]> => {
-  try {
-    const q = query(
-      collection(db, QUESTIONS_COLLECTION),
-      where('isResolved', '==', false),
-      orderBy('createdAt', 'desc')
-    );
-    
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => {
-      const data = doc.data();
-      return {
-        id: doc.id,
-        question: data.question,
-        description: data.description,
-        author: data.author,
-        authorName: data.authorName,
-        createdAt: data.createdAt?.toDate() || new Date(),
-        updatedAt: data.updatedAt?.toDate() || new Date(),
-        answerCount: data.answerCount || 0,
-        isResolved: data.isResolved || false,
-        tags: data.tags || [],
-        category: data.category
-      } as Question;
-    });
-  } catch (error) {
-    console.error('Error fetching unresolved questions:', error);
-    throw error;
-  }
-};
-
-// Get a specific question by ID
-export const getQuestionById = async (questionId: string): Promise<Question | null> => {
-  try {
-    const questionDoc = await getDoc(doc(db, QUESTIONS_COLLECTION, questionId));
-    if (questionDoc.exists()) {
-      const data = questionDoc.data();
-      return {
-        id: questionDoc.id,
-        question: data.question,
-        description: data.description,
-        author: data.author,
-        authorName: data.authorName,
-        createdAt: data.createdAt?.toDate() || new Date(),
-        updatedAt: data.updatedAt?.toDate() || new Date(),
-        answerCount: data.answerCount || 0,
-        isResolved: data.isResolved || false,
-        tags: data.tags || [],
-        category: data.category
-      } as Question;
+    if (!questionDoc.exists()) {
+      throw new Error('Question not found');
     }
-    return null;
+    
+    const data = questionDoc.data();
+    await updateDoc(questionRef, {
+      commentsDisabled: !data.commentsDisabled
+    });
   } catch (error) {
-    console.error('Error fetching question:', error);
+    console.error('Error toggling comments:', error);
     throw error;
   }
 };
 
-// Create a new answer
-export const createAnswer = async (
-  questionId: string,
-  answerData: CreateAnswerData, 
-  authorId: string
-): Promise<string> => {
+// Answers CRUD
+export const createAnswer = async (answerData: {
+  questionId: string;
+  content: string;
+  author: string;
+  authorName: string;
+  isAdminResponse: boolean;
+}): Promise<string> => {
   try {
-    // Get user info for author name
-    const user = await getUserById(authorId);
-    if (!user) {
-      throw new Error('User not found');
-    }
-
-    const docData = {
+    const docRef = await addDoc(answersRef, {
       ...answerData,
-      questionId,
-      author: authorId,
-      authorName: user.name,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
-      isAccepted: false,
-      votes: 0,
-      voters: []
-    };
-
-    const docRef = await addDoc(
-      collection(db, QUESTIONS_COLLECTION, questionId, ANSWERS_COLLECTION), 
-      docData
-    );
-
-    // Increment answer count on question
-    await updateDoc(doc(db, QUESTIONS_COLLECTION, questionId), {
-      answerCount: increment(1),
-      updatedAt: serverTimestamp()
+      upvotes: 0,
+      upvotedBy: [],
+      isAccepted: false
     });
+    
+    try {
+      // Update question's isAnswered status
+      const questionRef = doc(db, 'questions', answerData.questionId);
+      await updateDoc(questionRef, {
+        isAnswered: true,
+        updatedAt: serverTimestamp()
+      });
+      
 
-    console.log('Answer created with ID:', docRef.id);
+    } catch (updateError) {
+      console.error('Error updating question status (but answer was created):', updateError);
+      // Don't throw here - the answer was created successfully
+    }
+    
+    try {
+      // Send notification to question author
+      const questionRef = doc(db, 'questions', answerData.questionId);
+      const questionDoc = await getDoc(questionRef);
+      if (questionDoc.exists()) {
+        const questionData = questionDoc.data();
+        if (!questionData.isAnonymous && questionData.author !== answerData.author) {
+          await createNotification({
+            userId: questionData.author,
+            type: 'answer_posted',
+            title: 'New Answer',
+            message: `${answerData.authorName} answered your question "${questionData.title}".`,
+            questionId: answerData.questionId,
+            answerId: docRef.id
+          });
+
+        }
+      }
+    } catch (notificationError) {
+      console.error('Error creating notification (but answer was created):', notificationError);
+      // Don't throw here - the answer was created successfully
+    }
+    
     return docRef.id;
   } catch (error) {
     console.error('Error creating answer:', error);
@@ -323,292 +330,292 @@ export const createAnswer = async (
   }
 };
 
-// Update an existing answer
-export const updateAnswer = async (
-  questionId: string,
-  answerId: string,
-  answerData: UpdateAnswerData,
-  userId: string
-): Promise<void> => {
+export const upvoteAnswer = async (answerId: string, userId: string): Promise<void> => {
   try {
-    // Check if user is the author or admin
-    const answer = await getAnswerById(questionId, answerId);
-    if (!answer) {
-      throw new Error('Answer not found');
-    }
-
-    const user = await getUserById(userId);
-    if (!user) {
-      throw new Error('User not found');
-    }
-
-    // Only allow author or admin to update
-    if (answer.author !== userId && user.role !== 'admin') {
-      throw new Error('Unauthorized to update this answer');
-    }
-
-    const updateFields = {
-      ...answerData,
-      updatedAt: serverTimestamp()
-    };
-
-    await updateDoc(
-      doc(db, QUESTIONS_COLLECTION, questionId, ANSWERS_COLLECTION, answerId), 
-      updateFields
-    );
-    console.log('Answer updated:', answerId);
-  } catch (error) {
-    console.error('Error updating answer:', error);
-    throw error;
-  }
-};
-
-// Delete an answer
-export const deleteAnswer = async (
-  questionId: string,
-  answerId: string,
-  userId: string
-): Promise<void> => {
-  try {
-    // Check permissions
-    const answer = await getAnswerById(questionId, answerId);
-    if (!answer) {
-      throw new Error('Answer not found');
-    }
-
-    const user = await getUserById(userId);
-    if (!user) {
-      throw new Error('User not found');
-    }
-
-    // Only allow admin to delete answers
-    if (user.role !== 'admin') {
-      throw new Error('Only administrators can delete answers');
-    }
-
-    await deleteDoc(doc(db, QUESTIONS_COLLECTION, questionId, ANSWERS_COLLECTION, answerId));
-
-    // Decrement answer count on question
-    await updateDoc(doc(db, QUESTIONS_COLLECTION, questionId), {
-      answerCount: increment(-1),
-      updatedAt: serverTimestamp()
-    });
-
-    console.log('Answer deleted:', answerId);
-  } catch (error) {
-    console.error('Error deleting answer:', error);
-    throw error;
-  }
-};
-
-// Get answers for a specific question
-export const getAnswersByQuestionId = async (questionId: string): Promise<Answer[]> => {
-  try {
-    const q = query(
-      collection(db, QUESTIONS_COLLECTION, questionId, ANSWERS_COLLECTION),
-      orderBy('votes', 'desc'),
-      orderBy('createdAt', 'asc')
-    );
+    const answerRef = doc(db, 'answers', answerId);
+    const answerDoc = await getDoc(answerRef);
     
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => {
-      const data = doc.data();
-      return {
-        id: doc.id,
-        questionId,
-        answer: data.answer,
-        author: data.author,
-        authorName: data.authorName,
-        createdAt: data.createdAt?.toDate() || new Date(),
-        updatedAt: data.updatedAt?.toDate() || new Date(),
-        isAccepted: data.isAccepted || false,
-        votes: data.votes || 0,
-        voters: data.voters || []
-      } as Answer;
-    });
-  } catch (error) {
-    console.error('Error fetching answers:', error);
-    throw error;
-  }
-};
-
-// Get a specific answer by ID
-export const getAnswerById = async (questionId: string, answerId: string): Promise<Answer | null> => {
-  try {
-    const answerDoc = await getDoc(doc(db, QUESTIONS_COLLECTION, questionId, ANSWERS_COLLECTION, answerId));
-    if (answerDoc.exists()) {
-      const data = answerDoc.data();
-      return {
-        id: answerDoc.id,
-        questionId,
-        answer: data.answer,
-        author: data.author,
-        authorName: data.authorName,
-        createdAt: data.createdAt?.toDate() || new Date(),
-        updatedAt: data.updatedAt?.toDate() || new Date(),
-        isAccepted: data.isAccepted || false,
-        votes: data.votes || 0,
-        voters: data.voters || []
-      } as Answer;
-    }
-    return null;
-  } catch (error) {
-    console.error('Error fetching answer:', error);
-    throw error;
-  }
-};
-
-// Vote on an answer (up/down/remove)
-export const voteAnswer = async (
-  questionId: string,
-  voteData: VoteAnswerData,
-  userId: string
-): Promise<void> => {
-  try {
-    const { answerId, vote } = voteData;
-    const answerRef = doc(db, QUESTIONS_COLLECTION, questionId, ANSWERS_COLLECTION, answerId);
-    
-    const answer = await getAnswerById(questionId, answerId);
-    if (!answer) {
+    if (!answerDoc.exists()) {
       throw new Error('Answer not found');
     }
-
-    const hasVoted = answer.voters.includes(userId);
-
-    if (vote === 'remove') {
-      if (hasVoted) {
-        await updateDoc(answerRef, {
-          votes: increment(-1),
-          voters: arrayRemove(userId)
-        });
-      }
-    } else {
-      if (hasVoted) {
-        // User already voted, can't vote again
-        throw new Error('You have already voted on this answer');
-      }
-
-      const voteChange = vote === 'up' ? 1 : -1;
+    
+    const data = answerDoc.data();
+    const upvotedBy = data.upvotedBy || [];
+    
+    if (upvotedBy.includes(userId)) {
+      // Remove upvote
       await updateDoc(answerRef, {
-        votes: increment(voteChange),
-        voters: arrayUnion(userId)
+        upvotes: increment(-1),
+        upvotedBy: arrayRemove(userId)
+      });
+    } else {
+      // Add upvote
+      await updateDoc(answerRef, {
+        upvotes: increment(1),
+        upvotedBy: arrayUnion(userId)
       });
     }
-
-    console.log('Vote recorded for answer:', answerId);
   } catch (error) {
-    console.error('Error voting on answer:', error);
+    console.error('Error upvoting answer:', error);
     throw error;
   }
 };
 
-// Mark an answer as accepted (only question author or admin)
-export const acceptAnswer = async (
-  questionId: string,
-  answerId: string,
-  userId: string
-): Promise<void> => {
+export const acceptAnswer = async (answerId: string): Promise<void> => {
   try {
-    const question = await getQuestionById(questionId);
-    if (!question) {
-      throw new Error('Question not found');
-    }
-
-    const user = await getUserById(userId);
-    if (!user) {
-      throw new Error('User not found');
-    }
-
-    // Only question author or admin can accept answers
-    if (question.author !== userId && user.role !== 'admin') {
-      throw new Error('Only the question author or admin can accept answers');
-    }
-
-    // Unmark any previously accepted answers
-    const answers = await getAnswersByQuestionId(questionId);
-    for (const answer of answers) {
-      if (answer.isAccepted) {
-        await updateDoc(
-          doc(db, QUESTIONS_COLLECTION, questionId, ANSWERS_COLLECTION, answer.id),
-          { isAccepted: false }
-        );
-      }
-    }
-
-    // Mark the selected answer as accepted
-    await updateDoc(
-      doc(db, QUESTIONS_COLLECTION, questionId, ANSWERS_COLLECTION, answerId),
-      { isAccepted: true }
-    );
-
-    // Mark question as resolved
-    await updateDoc(doc(db, QUESTIONS_COLLECTION, questionId), {
-      isResolved: true,
-      updatedAt: serverTimestamp()
+    const answerRef = doc(db, 'answers', answerId);
+    await updateDoc(answerRef, {
+      isAccepted: true
     });
-
-    console.log('Answer accepted:', answerId);
   } catch (error) {
     console.error('Error accepting answer:', error);
     throw error;
   }
 };
 
-// Subscribe to questions for real-time updates
-export const subscribeToQuestions = (callback: (questions: Question[]) => void) => {
-  const q = query(
-    collection(db, QUESTIONS_COLLECTION),
-    orderBy('createdAt', 'desc')
-  );
-
-  return onSnapshot(q, (querySnapshot) => {
-    const questions = querySnapshot.docs.map(doc => {
-      const data = doc.data();
-      return {
-        id: doc.id,
-        question: data.question,
-        description: data.description,
-        author: data.author,
-        authorName: data.authorName,
-        createdAt: data.createdAt?.toDate() || new Date(),
-        updatedAt: data.updatedAt?.toDate() || new Date(),
-        answerCount: data.answerCount || 0,
-        isResolved: data.isResolved || false,
-        tags: data.tags || [],
-        category: data.category
-      } as Question;
-    });
-    callback(questions);
-  });
+export const deleteAnswer = async (answerId: string, userId: string, isAdmin: boolean): Promise<void> => {
+  try {
+    const answerRef = doc(db, 'answers', answerId);
+    const answerDoc = await getDoc(answerRef);
+    
+    if (!answerDoc.exists()) {
+      throw new Error('Answer not found');
+    }
+    
+    const answerData = answerDoc.data();
+    
+    // Check permissions: admins can delete any answer, users can only delete their own
+    if (!isAdmin && answerData.author !== userId) {
+      throw new Error('Permission denied: You can only delete your own answers');
+    }
+    
+    // Get the question to check if this was the only answer
+    const questionRef = doc(db, 'questions', answerData.questionId);
+    const questionDoc = await getDoc(questionRef);
+    
+    if (questionDoc.exists()) {
+      // Check if there are other answers for this question
+      const answersQuery = query(
+        answersRef,
+        where('questionId', '==', answerData.questionId)
+      );
+      const answersSnapshot = await getDocs(answersQuery);
+      
+      // If this is the only answer, mark question as unanswered
+      if (answersSnapshot.docs.length === 1) {
+        await updateDoc(questionRef, {
+          isAnswered: false,
+          updatedAt: serverTimestamp()
+        });
+      }
+    }
+    
+    // Delete the answer
+    await deleteDoc(answerRef);
+    
+    console.log('Answer deleted successfully:', answerId);
+  } catch (error) {
+    console.error('Error deleting answer:', error);
+    throw error;
+  }
 };
 
-// Subscribe to answers for a specific question
-export const subscribeToAnswers = (
-  questionId: string, 
-  callback: (answers: Answer[]) => void
-) => {
-  const q = query(
-    collection(db, QUESTIONS_COLLECTION, questionId, ANSWERS_COLLECTION),
-    orderBy('votes', 'desc'),
-    orderBy('createdAt', 'asc')
-  );
+// Edit Requests
+export const createEditRequest = async (editRequestData: {
+  questionId: string;
+  requestedBy: string;
+  requestedByName: string;
+  originalContent: string;
+  newContent: string;
+  reason: string;
+}): Promise<string> => {
+  try {
+    const docRef = await addDoc(editRequestsRef, {
+      ...editRequestData,
+      status: 'pending',
+      createdAt: serverTimestamp()
+    });
+    return docRef.id;
+  } catch (error) {
+    console.error('Error creating edit request:', error);
+    throw error;
+  }
+};
 
-  return onSnapshot(q, (querySnapshot) => {
-    const answers = querySnapshot.docs.map(doc => {
+export const getEditRequests = async (): Promise<EditRequest[]> => {
+  try {
+    const q = query(editRequestsRef, orderBy('createdAt', 'desc'));
+    const querySnapshot = await getDocs(q);
+    
+    return querySnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+      createdAt: convertTimestamp(doc.data().createdAt),
+      reviewedAt: convertTimestamp(doc.data().reviewedAt)
+    } as EditRequest));
+  } catch (error) {
+    console.error('Error fetching edit requests:', error);
+    // Return empty array instead of throwing
+    return [];
+  }
+};
+
+export const getUserEditRequests = async (userId: string): Promise<EditRequest[]> => {
+  try {
+    const q = query(
+      editRequestsRef, 
+      where('requestedBy', '==', userId)
+    );
+    const querySnapshot = await getDocs(q);
+    
+    const requests = querySnapshot.docs.map(doc => {
       const data = doc.data();
       return {
         id: doc.id,
-        questionId,
-        answer: data.answer,
-        author: data.author,
-        authorName: data.authorName,
-        createdAt: data.createdAt?.toDate() || new Date(),
-        updatedAt: data.updatedAt?.toDate() || new Date(),
-        isAccepted: data.isAccepted || false,
-        votes: data.votes || 0,
-        voters: data.voters || []
-      } as Answer;
+        ...data,
+        createdAt: convertTimestamp(data.createdAt),
+        reviewedAt: convertTimestamp(data.reviewedAt)
+      } as EditRequest;
+    }).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()); // Sort in memory instead
+    
+    return requests;
+  } catch (error) {
+    console.error('Error fetching user edit requests:', error);
+    // Return empty array instead of throwing
+    return [];
+  }
+};
+
+export const approveEditRequest = async (
+  requestId: string, 
+  adminId: string, 
+  adminName: string
+): Promise<void> => {
+  try {
+    const requestRef = doc(db, 'editRequests', requestId);
+    const requestDoc = await getDoc(requestRef);
+    
+    if (!requestDoc.exists()) {
+      throw new Error('Edit request not found');
+    }
+    
+    const requestData = requestDoc.data();
+    
+    // Update the question with new content
+    const questionRef = doc(db, 'questions', requestData.questionId);
+    await updateDoc(questionRef, {
+      content: requestData.newContent,
+      updatedAt: serverTimestamp()
     });
-    callback(answers);
-  });
+    
+    // Update edit request status
+    await updateDoc(requestRef, {
+      status: 'approved',
+      reviewedBy: adminId,
+      reviewedAt: serverTimestamp()
+    });
+    
+    // Send notification to requester
+    await createNotification({
+      userId: requestData.requestedBy,
+      type: 'edit_approved',
+      title: 'Edit Request Approved',
+      message: `Your edit request has been approved by ${adminName}.`,
+      questionId: requestData.questionId
+    });
+  } catch (error) {
+    console.error('Error approving edit request:', error);
+    throw error;
+  }
+};
+
+export const rejectEditRequest = async (
+  requestId: string, 
+  adminId: string, 
+  adminName: string
+): Promise<void> => {
+  try {
+    const requestRef = doc(db, 'editRequests', requestId);
+    const requestDoc = await getDoc(requestRef);
+    
+    if (!requestDoc.exists()) {
+      throw new Error('Edit request not found');
+    }
+    
+    const requestData = requestDoc.data();
+    
+    // Update edit request status
+    await updateDoc(requestRef, {
+      status: 'rejected',
+      reviewedBy: adminId,
+      reviewedAt: serverTimestamp()
+    });
+    
+    // Send notification to requester
+    await createNotification({
+      userId: requestData.requestedBy,
+      type: 'edit_rejected',
+      title: 'Edit Request Rejected',
+      message: `Your edit request has been rejected by ${adminName}.`,
+      questionId: requestData.questionId
+    });
+  } catch (error) {
+    console.error('Error rejecting edit request:', error);
+    throw error;
+  }
+};
+
+// Notifications
+export const createNotification = async (notificationData: {
+  userId: string;
+  type: 'question_removed' | 'edit_approved' | 'edit_rejected' | 'answer_posted';
+  title: string;
+  message: string;
+  questionId?: string;
+  answerId?: string;
+}): Promise<string> => {
+  try {
+    const docRef = await addDoc(notificationsRef, {
+      ...notificationData,
+      isRead: false,
+      createdAt: serverTimestamp()
+    });
+    return docRef.id;
+  } catch (error) {
+    console.error('Error creating notification:', error);
+    throw error;
+  }
+};
+
+export const getUserNotifications = async (userId: string): Promise<QANotification[]> => {
+  try {
+    const q = query(
+      notificationsRef, 
+      where('userId', '==', userId),
+      orderBy('createdAt', 'desc'),
+      limit(50)
+    );
+    const querySnapshot = await getDocs(q);
+    
+    return querySnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+      createdAt: convertTimestamp(doc.data().createdAt)
+    } as QANotification));
+  } catch (error) {
+    console.error('Error fetching notifications:', error);
+    throw error;
+  }
+};
+
+export const markNotificationAsRead = async (notificationId: string): Promise<void> => {
+  try {
+    const notificationRef = doc(db, 'notifications', notificationId);
+    await updateDoc(notificationRef, {
+      isRead: true
+    });
+  } catch (error) {
+    console.error('Error marking notification as read:', error);
+    throw error;
+  }
 };

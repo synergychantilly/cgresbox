@@ -1,4 +1,4 @@
-export type RecurrenceType = 'none' | 'weekly' | 'biweekly' | 'monthly';
+export type RecurrenceType = 'none' | 'weekly' | 'biweekly' | 'monthly' | 'yearly';
 
 export interface CalendarEvent {
   id: string;

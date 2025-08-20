@@ -37,6 +37,9 @@ const generateRecurringDates = (startDate: Date, recurrenceType: RecurrenceType,
       case 'monthly':
         currentDate.setMonth(currentDate.getMonth() + 1);
         break;
+      case 'yearly':
+        currentDate.setFullYear(currentDate.getFullYear() + 1);
+        break;
       default:
         break;
     }
@@ -358,4 +361,92 @@ export const subscribeToUpcomingCalendarEvents = (callback: (events: CalendarEve
     });
     callback(events);
   });
+};
+
+// Create birthday calendar event for a user
+export const createBirthdayEvent = async (
+  userId: string, 
+  userName: string, 
+  birthday: Date, 
+  createdBy: string
+): Promise<string> => {
+  try {
+    // Create a birthday event for the current year and future years
+    const currentYear = new Date().getFullYear();
+    const birthYear = birthday.getFullYear();
+    const birthdayThisYear = new Date(currentYear, birthday.getMonth(), birthday.getDate());
+    
+    // Use the birthday this year as the starting date for recurring events
+    const startDate = birthdayThisYear < new Date() 
+      ? new Date(currentYear + 1, birthday.getMonth(), birthday.getDate()) // Next year if already passed
+      : birthdayThisYear; // This year if not yet passed
+
+    const eventData: CreateCalendarEventData = {
+      title: `🎂 ${userName}'s Birthday`,
+      icon: '🎂',
+      description: `Happy Birthday ${userName}! ${birthYear ? `Turning ${currentYear - birthYear} this year.` : ''}`,
+      date: startDate,
+      isRecurring: true,
+      recurrenceType: 'yearly'
+    };
+
+    return await createCalendarEvent(eventData, createdBy);
+  } catch (error) {
+    console.error('Error creating birthday event:', error);
+    throw error;
+  }
+};
+
+// Remove birthday events for a user
+export const removeBirthdayEvents = async (userId: string): Promise<void> => {
+  try {
+    // Find all birthday events for this user
+    const q = query(
+      collection(db, COLLECTION_NAME),
+      where('title', '>=', `🎂 ${userId}`),
+      where('title', '<', `🎂 ${userId}\uf8ff`)
+    );
+    
+    const querySnapshot = await getDocs(q);
+    const batch = writeBatch(db);
+    
+    querySnapshot.docs.forEach(docSnapshot => {
+      batch.delete(docSnapshot.ref);
+    });
+    
+    if (querySnapshot.docs.length > 0) {
+      await batch.commit();
+      console.log(`Removed ${querySnapshot.docs.length} birthday events for user ${userId}`);
+    }
+  } catch (error) {
+    console.error('Error removing birthday events:', error);
+    throw error;
+  }
+};
+
+// Remove birthday events by user name (more reliable approach)
+export const removeBirthdayEventsByName = async (userName: string): Promise<void> => {
+  try {
+    // Find all birthday events containing the user's name
+    const q = query(collection(db, COLLECTION_NAME));
+    const querySnapshot = await getDocs(q);
+    const batch = writeBatch(db);
+    let eventsRemoved = 0;
+    
+    querySnapshot.docs.forEach(docSnapshot => {
+      const data = docSnapshot.data();
+      if (data.title && data.title.includes(`${userName}'s Birthday`)) {
+        batch.delete(docSnapshot.ref);
+        eventsRemoved++;
+      }
+    });
+    
+    if (eventsRemoved > 0) {
+      await batch.commit();
+      console.log(`Removed ${eventsRemoved} birthday events for ${userName}`);
+    }
+  } catch (error) {
+    console.error('Error removing birthday events by name:', error);
+    throw error;
+  }
 };

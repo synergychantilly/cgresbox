@@ -9,6 +9,7 @@ import Resources from './components/Resources';
 import QA from './components/QA';
 import Complaints from './components/Complaints';
 import Documents from './components/Documents';
+import AdminDocuments from './components/AdminDocuments';
 import UserManagement from './components/UserManagement';
 import { createAdminUser, createAdminUserDocument, checkAdminUserDocument } from './lib/adminSetup';
 
@@ -35,6 +36,8 @@ function AppContent() {
         return <Complaints />;
       case 'documents':
         return <Documents />;
+      case 'admin-documents':
+        return <AdminDocuments />;
       case 'users':
         return <UserManagement />;
       default:

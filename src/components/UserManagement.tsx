@@ -6,7 +6,10 @@ import {
   approveUser, 
   disableUser, 
   enableUser,
-  subscribeToPendingUsers 
+  subscribeToPendingUsers,
+  promoteToAdmin,
+  demoteFromAdmin,
+  deleteUserCompletely
 } from '../lib/userService';
 import { User } from '../types';
 import { 
@@ -21,11 +24,14 @@ import {
   Filter,
   UserCheck,
   UserX,
-  Calendar
+  Calendar,
+  Crown,
+  Trash2,
+  UserMinus
 } from 'lucide-react';
 
 const UserManagement: React.FC = () => {
-  const { userData } = useAuth();
+  const { userData, isMasterAdmin } = useAuth();
   const [pendingUsers, setPendingUsers] = useState<User[]>([]);
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
@@ -34,6 +40,7 @@ const UserManagement: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'approved' | 'disabled'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [error, setError] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   // Real-time subscription to pending users
   useEffect(() => {
@@ -125,6 +132,61 @@ const UserManagement: React.FC = () => {
     }
   };
 
+  const handlePromoteToAdmin = async (userId: string) => {
+    if (!userData?.id || !isMasterAdmin) return;
+    
+    setActionLoading(userId);
+    try {
+      await promoteToAdmin(userId, userData.id);
+      setError('');
+      if (activeTab === 'all') {
+        await loadAllUsers();
+      }
+    } catch (error) {
+      console.error('Error promoting user to admin:', error);
+      setError('Failed to promote user to admin');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDemoteFromAdmin = async (userId: string) => {
+    if (!userData?.id || !isMasterAdmin) return;
+    
+    setActionLoading(userId);
+    try {
+      await demoteFromAdmin(userId, userData.id);
+      setError('');
+      if (activeTab === 'all') {
+        await loadAllUsers();
+      }
+    } catch (error) {
+      console.error('Error demoting user from admin:', error);
+      setError('Failed to demote user from admin');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDeleteUser = async (userId: string) => {
+    if (!userData?.id || !isMasterAdmin) return;
+    
+    setActionLoading(userId);
+    try {
+      await deleteUserCompletely(userId, userData.id);
+      setError('');
+      setConfirmDelete(null);
+      // Remove from local state
+      setPendingUsers(prev => prev.filter(user => user.id !== userId));
+      setAllUsers(prev => prev.filter(user => user.id !== userId));
+    } catch (error) {
+      console.error('Error deleting user:', error);
+      setError('Failed to delete user');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const getFilteredUsers = () => {
     let users = activeTab === 'pending' ? pendingUsers : allUsers;
     
@@ -172,18 +234,29 @@ const UserManagement: React.FC = () => {
     }
   };
 
-  const getRoleBadge = (role: string) => {
-    return role === 'admin' ? (
-      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
-        <Shield className="h-3 w-3 mr-1" />
-        Admin
-      </span>
-    ) : (
-      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-        <Users className="h-3 w-3 mr-1" />
-        User
-      </span>
-    );
+  const getRoleBadge = (user: User) => {
+    if (user.isMasterAdmin) {
+      return (
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gradient-to-r from-yellow-100 to-orange-100 text-orange-800 border border-orange-200">
+          <Crown className="h-3 w-3 mr-1" />
+          Master Admin
+        </span>
+      );
+    } else if (user.role === 'admin') {
+      return (
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+          <Shield className="h-3 w-3 mr-1" />
+          Admin
+        </span>
+      );
+    } else {
+      return (
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+          <Users className="h-3 w-3 mr-1" />
+          User
+        </span>
+      );
+    }
   };
 
   if (!userData || userData.role !== 'admin') {
@@ -348,7 +421,7 @@ const UserManagement: React.FC = () => {
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      {getRoleBadge(user.role)}
+                      {getRoleBadge(user)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       {getStatusBadge(user.status)}
@@ -360,7 +433,8 @@ const UserManagement: React.FC = () => {
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                      <div className="flex space-x-2">
+                      <div className="flex space-x-2 flex-wrap gap-1">
+                        {/* Standard admin actions */}
                         {user.status === 'pending' && (
                           <>
                             <button
@@ -381,7 +455,7 @@ const UserManagement: React.FC = () => {
                             </button>
                           </>
                         )}
-                        {user.status === 'approved' && user.role !== 'admin' && (
+                        {user.status === 'approved' && !user.isMasterAdmin && (
                           <button
                             onClick={() => handleDisableUser(user.id)}
                             disabled={actionLoading === user.id}
@@ -400,6 +474,69 @@ const UserManagement: React.FC = () => {
                             <UserCheck className="h-3 w-3 mr-1" />
                             Enable
                           </button>
+                        )}
+
+                        {/* Master Admin only actions */}
+                        {isMasterAdmin && !user.isMasterAdmin && (
+                          <>
+                            {/* Role management */}
+                            {user.role === 'user' && user.status === 'approved' && (
+                              <button
+                                onClick={() => handlePromoteToAdmin(user.id)}
+                                disabled={actionLoading === user.id}
+                                className="inline-flex items-center px-3 py-1 border border-transparent text-xs font-medium rounded text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 disabled:opacity-50"
+                              >
+                                <Crown className="h-3 w-3 mr-1" />
+                                Make Admin
+                              </button>
+                            )}
+                            {user.role === 'admin' && (
+                              <button
+                                onClick={() => handleDemoteFromAdmin(user.id)}
+                                disabled={actionLoading === user.id}
+                                className="inline-flex items-center px-3 py-1 border border-transparent text-xs font-medium rounded text-white bg-orange-600 hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500 disabled:opacity-50"
+                              >
+                                <UserMinus className="h-3 w-3 mr-1" />
+                                Remove Admin
+                              </button>
+                            )}
+                            
+                            {/* Delete user */}
+                            {confirmDelete === user.id ? (
+                              <div className="flex space-x-1">
+                                <button
+                                  onClick={() => handleDeleteUser(user.id)}
+                                  disabled={actionLoading === user.id}
+                                  className="inline-flex items-center px-2 py-1 border border-transparent text-xs font-medium rounded text-white bg-red-700 hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50"
+                                >
+                                  Confirm
+                                </button>
+                                <button
+                                  onClick={() => setConfirmDelete(null)}
+                                  className="inline-flex items-center px-2 py-1 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => setConfirmDelete(user.id)}
+                                disabled={actionLoading === user.id}
+                                className="inline-flex items-center px-3 py-1 border border-transparent text-xs font-medium rounded text-white bg-red-700 hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50"
+                              >
+                                <Trash2 className="h-3 w-3 mr-1" />
+                                Delete
+                              </button>
+                            )}
+                          </>
+                        )}
+                        
+                        {/* Show master admin indicator */}
+                        {user.isMasterAdmin && (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-gradient-to-r from-yellow-200 to-orange-200 text-orange-900">
+                            <Crown className="h-3 w-3 mr-1" />
+                            Protected
+                          </span>
                         )}
                       </div>
                     </td>

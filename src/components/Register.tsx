@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { Eye, EyeOff, Mail, Lock, User, Heart, CheckCircle } from 'lucide-react';
+import { Eye, EyeOff, Mail, Lock, User, Heart, CheckCircle, Calendar } from 'lucide-react';
 
 interface RegisterProps {
   onToggleMode: () => void;
@@ -11,7 +11,8 @@ const Register: React.FC<RegisterProps> = ({ onToggleMode }) => {
     name: '',
     email: '',
     password: '',
-    confirmPassword: ''
+    confirmPassword: '',
+    birthday: ''
   });
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -49,7 +50,8 @@ const Register: React.FC<RegisterProps> = ({ onToggleMode }) => {
     setLoading(true);
 
     try {
-      await register(formData.email, formData.password, formData.name);
+      const birthday = formData.birthday ? new Date(formData.birthday) : undefined;
+      await register(formData.email, formData.password, formData.name, birthday);
       setSuccess(true);
     } catch (error: any) {
       setError(error.message || 'Failed to create account');
@@ -152,6 +154,28 @@ const Register: React.FC<RegisterProps> = ({ onToggleMode }) => {
                   placeholder="Enter your email"
                 />
               </div>
+            </div>
+
+            {/* Birthday Field */}
+            <div className="space-y-2">
+              <label htmlFor="birthday" className="text-sm font-medium text-gray-700">
+                Birthday <span className="text-gray-500">(optional)</span>
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Calendar className="h-5 w-5 text-gray-400" />
+                </div>
+                <input
+                  id="birthday"
+                  name="birthday"
+                  type="date"
+                  value={formData.birthday}
+                  onChange={handleChange}
+                  className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-colors"
+                  max={new Date().toISOString().split('T')[0]} // Prevent future dates
+                />
+              </div>
+              <p className="text-xs text-gray-500">We'll add your birthday to the company calendar when your account is approved.</p>
             </div>
 
             {/* Password Field */}

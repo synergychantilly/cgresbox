@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   CalendarDaysIcon,
   MegaphoneIcon,
@@ -7,35 +7,106 @@ import {
   ExclamationTriangleIcon,
   ChevronRightIcon,
 } from '@heroicons/react/24/outline';
-import { CalendarEvent, Announcement, Document, Question, Complaint } from '../types';
+import { CalendarEvent } from '../types/calendar';
+import { Update } from '../types/updates';
+import { UserDocumentStatus } from '../types/documents';
+import { Question } from '../types';
+import { useAuth } from '../contexts/AuthContext';
+import { getUpcomingCalendarEvents } from '../lib/calendarService';
+import { getActiveUpdates } from '../lib/updatesService';
+import { userDocumentService } from '../lib/documentsService';
+import { getQuestions } from '../lib/qaService';
+import { getUsers } from '../lib/userService';
 
 interface DashboardProps {
   onPageChange: (page: string) => void;
 }
 
-// Empty arrays - data will be loaded from Firebase
-const upcomingEvents: CalendarEvent[] = [];
-const recentAnnouncements: Announcement[] = [];
-const pendingDocuments: Document[] = [];
-const recentQuestions: Question[] = [];
-
 export default function Dashboard({ onPageChange }: DashboardProps) {
-  const getEventTypeColor = (type: string) => {
-    switch (type) {
-      case 'payday': return 'bg-secondary-100 text-secondary-700';
-      case 'birthday': return 'bg-accent-100 text-accent-700';
-      case 'meeting': return 'bg-primary-100 text-primary-700';
-      case 'important': return 'bg-destructive-100 text-destructive-700';
-      default: return 'bg-gray-100 text-gray-700';
-    }
+  const { userData, currentUser } = useAuth();
+  const [upcomingEvents, setUpcomingEvents] = useState<CalendarEvent[]>([]);
+  const [recentUpdates, setRecentUpdates] = useState<Update[]>([]);
+  const [userDocuments, setUserDocuments] = useState<UserDocumentStatus[]>([]);
+  const [recentQuestions, setRecentQuestions] = useState<Question[]>([]);
+  const [allUsers, setAllUsers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const loadDashboardData = async () => {
+      if (!currentUser || !userData) return;
+
+      try {
+        setLoading(true);
+        
+        // Load all data in parallel
+        const promises: Promise<any>[] = [
+          getUpcomingCalendarEvents(),
+          getActiveUpdates(),
+          userData.role === 'admin' 
+            ? userDocumentService.getAllUserDocuments()
+            : userDocumentService.getUserDocuments(currentUser.uid),
+          getQuestions()
+        ];
+
+        // For admins, also load user data to filter by status
+        if (userData.role === 'admin') {
+          promises.push(getUsers('approved')); // Only get approved users
+        }
+
+        const results = await Promise.all(promises);
+        
+        // Destructure based on whether we're admin or not
+        if (userData.role === 'admin') {
+          const [events, updates, documents, questions, users] = results as [
+            CalendarEvent[], 
+            Update[], 
+            UserDocumentStatus[], 
+            Question[], 
+            any[]
+          ];
+          
+          setUpcomingEvents(events.slice(0, 5));
+          setRecentUpdates(updates.slice(0, 3));
+          setUserDocuments(documents);
+          setRecentQuestions(questions.slice(0, 3));
+          setAllUsers(users);
+        } else {
+          const [events, updates, documents, questions] = results as [
+            CalendarEvent[], 
+            Update[], 
+            UserDocumentStatus[], 
+            Question[]
+          ];
+          
+          setUpcomingEvents(events.slice(0, 5));
+          setRecentUpdates(updates.slice(0, 3));
+          setUserDocuments(documents);
+          setRecentQuestions(questions.slice(0, 3));
+        }
+      } catch (error) {
+        console.error('Error loading dashboard data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadDashboardData();
+  }, [currentUser, userData]);
+
+  const getEventTypeColor = (icon: string) => {
+    if (icon.includes('💰') || icon.includes('💵')) return 'bg-secondary-100 text-secondary-700';
+    if (icon.includes('🎂') || icon.includes('🎉')) return 'bg-accent-100 text-accent-700';
+    if (icon.includes('📅') || icon.includes('👥')) return 'bg-primary-100 text-primary-700';
+    if (icon.includes('⚠️') || icon.includes('🚨')) return 'bg-destructive-100 text-destructive-700';
+    return 'bg-gray-100 text-gray-700';
   };
 
-  const getAnnouncementTypeColor = (type: string) => {
+  const getUpdateTypeColor = (type: string) => {
     switch (type) {
       case 'urgent': return 'bg-destructive-100 text-destructive-700';
-      case 'warning': return 'bg-accent-100 text-accent-700';
-      case 'info': return 'bg-primary-100 text-primary-700';
-      case 'celebration': return 'bg-secondary-100 text-secondary-700';
+      case 'warning': return 'bg-amber-100 text-amber-700';
+      case 'info': return 'bg-blue-100 text-blue-700';
+      case 'celebration': return 'bg-green-100 text-green-700';
       default: return 'bg-gray-100 text-gray-700';
     }
   };
@@ -48,11 +119,53 @@ export default function Dashboard({ onPageChange }: DashboardProps) {
     });
   };
 
+  const getPendingDocuments = () => {
+    if (userData?.role === 'admin') {
+      // For admins, show pending documents only for approved (enabled) users
+      const approvedUserIds = new Set(allUsers.map(user => user.id));
+      
+      return userDocuments.filter(doc => {
+        const isPending = doc.status === 'not_started' || doc.status === 'viewed' || doc.status === 'started';
+        const isApprovedUser = approvedUserIds.has(doc.userId);
+        return isPending && isApprovedUser;
+      });
+    } else {
+      // For regular users, show their own pending documents
+      return userDocuments.filter(doc => 
+        doc.status === 'not_started' || doc.status === 'viewed' || doc.status === 'started'
+      );
+    }
+  };
+
+  const getUnansweredQuestions = () => {
+    return recentQuestions.filter(question => !question.isAnswered);
+  };
+
+  if (loading) {
+    return (
+      <div className="space-y-8">
+        <div className="animate-pulse">
+          <div className="h-8 bg-gray-200 rounded w-1/3 mb-4"></div>
+          <div className="h-4 bg-gray-200 rounded w-1/2"></div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="animate-pulse">
+              <div className="h-24 bg-gray-200 rounded-lg"></div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-8">
       {/* Welcome Header */}
       <div className="animate-fade-in">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Welcome back!</h1>
+        <h1 className="text-3xl font-bold text-gray-900 mb-2">
+          Welcome back, {userData?.name?.split(' ')[0] || 'there'}! 👋
+        </h1>
         <p className="text-lg text-gray-600">
           Here's your overview for today, {new Date().toLocaleDateString('en-US', { 
             weekday: 'long', 
@@ -60,6 +173,31 @@ export default function Dashboard({ onPageChange }: DashboardProps) {
             day: 'numeric' 
           })}
         </p>
+        {userData?.birthday && (
+          <div className="mt-2">
+            {(() => {
+              const today = new Date();
+              const birthday = new Date(userData.birthday);
+              const birthdayThisYear = new Date(today.getFullYear(), birthday.getMonth(), birthday.getDate());
+              const daysUntilBirthday = Math.ceil((birthdayThisYear.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+              
+              if (daysUntilBirthday === 0) {
+                return (
+                  <p className="text-lg text-purple-600 font-semibold">
+                    🎂 Happy Birthday! Hope you have a wonderful day!
+                  </p>
+                );
+              } else if (daysUntilBirthday > 0 && daysUntilBirthday <= 7) {
+                return (
+                  <p className="text-sm text-purple-600">
+                    🎂 Your birthday is in {daysUntilBirthday} day{daysUntilBirthday > 1 ? 's' : ''}!
+                  </p>
+                );
+              }
+              return null;
+            })()}
+          </div>
+        )}
       </div>
 
       {/* Quick Stats Grid */}
@@ -82,8 +220,8 @@ export default function Dashboard({ onPageChange }: DashboardProps) {
               <MegaphoneIcon className="h-8 w-8 text-white" />
             </div>
             <div className="ml-4">
-              <p className="text-sm font-semibold text-accent-700">New Updates</p>
-              <p className="text-2xl font-bold text-accent-900">{recentAnnouncements.length}</p>
+              <p className="text-sm font-semibold text-accent-700">Active Updates</p>
+              <p className="text-2xl font-bold text-accent-900">{recentUpdates.length}</p>
             </div>
           </div>
         </div>
@@ -94,8 +232,10 @@ export default function Dashboard({ onPageChange }: DashboardProps) {
               <DocumentTextIcon className="h-8 w-8 text-white" />
             </div>
             <div className="ml-4">
-              <p className="text-sm font-semibold text-secondary-700">Pending Docs</p>
-              <p className="text-2xl font-bold text-secondary-900">{pendingDocuments.length}</p>
+              <p className="text-sm font-semibold text-secondary-700">
+                {userData?.role === 'admin' ? 'All Pending Docs' : 'Your Pending Docs'}
+              </p>
+              <p className="text-2xl font-bold text-secondary-900">{getPendingDocuments().length}</p>
             </div>
           </div>
         </div>
@@ -106,8 +246,8 @@ export default function Dashboard({ onPageChange }: DashboardProps) {
               <QuestionMarkCircleIcon className="h-8 w-8 text-white" />
             </div>
             <div className="ml-4">
-              <p className="text-sm font-semibold text-destructive-700">Open Questions</p>
-              <p className="text-2xl font-bold text-destructive-900">{recentQuestions.length}</p>
+              <p className="text-sm font-semibold text-destructive-700">Unanswered Questions</p>
+              <p className="text-2xl font-bold text-destructive-900">{getUnansweredQuestions().length}</p>
             </div>
           </div>
         </div>
@@ -128,19 +268,30 @@ export default function Dashboard({ onPageChange }: DashboardProps) {
             </button>
           </div>
           <div className="space-y-4">
-            {upcomingEvents.map((event) => (
-              <div key={event.id} className="flex items-center space-x-4 p-3 hover:bg-gray-50 rounded-lg transition-colors">
-                <div className="flex-shrink-0">
-                  <div className={`px-3 py-1 rounded-full text-sm font-semibold ${getEventTypeColor(event.type)}`}>
+            {upcomingEvents.length === 0 ? (
+              <div className="text-center py-8 text-gray-500">
+                <CalendarDaysIcon className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                <p>No upcoming events</p>
+              </div>
+            ) : (
+              upcomingEvents.map((event) => (
+                <div key={event.id} className="flex items-center space-x-4 p-3 hover:bg-gray-50 rounded-lg transition-colors">
+                  <div className="flex-shrink-0">
+                    <div className="text-2xl">{event.icon}</div>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-lg font-semibold text-gray-900 truncate">{event.title}</p>
+                    <p className="text-sm text-gray-600">{formatDate(event.date)}</p>
+                    {event.description && (
+                      <p className="text-xs text-gray-500 truncate">{event.description}</p>
+                    )}
+                  </div>
+                  <div className={`px-3 py-1 rounded-full text-xs font-semibold ${getEventTypeColor(event.icon)}`}>
                     {formatDate(event.date)}
                   </div>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-lg font-semibold text-gray-900 truncate">{event.title}</p>
-                  <p className="text-sm text-gray-600 capitalize">{event.type.replace('_', ' ')}</p>
-                </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
 
@@ -157,20 +308,32 @@ export default function Dashboard({ onPageChange }: DashboardProps) {
             </button>
           </div>
           <div className="space-y-4">
-            {recentAnnouncements.map((announcement) => (
-              <div key={announcement.id} className="p-4 border border-gray-200 rounded-lg hover:shadow-md transition-shadow">
-                <div className="flex items-start justify-between mb-2">
-                  <div className={`px-3 py-1 rounded-full text-xs font-semibold ${getAnnouncementTypeColor(announcement.type)}`}>
-                    {announcement.type.toUpperCase()}
-                  </div>
-                  <span className="text-sm text-gray-500">
-                    {announcement.publishedAt.toLocaleDateString()}
-                  </span>
-                </div>
-                <h3 className="font-semibold text-gray-900 mb-1">{announcement.title}</h3>
-                <p className="text-gray-700 text-sm line-clamp-2">{announcement.content}</p>
+            {recentUpdates.length === 0 ? (
+              <div className="text-center py-8 text-gray-500">
+                <MegaphoneIcon className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                <p>No recent updates</p>
               </div>
-            ))}
+            ) : (
+              recentUpdates.map((update) => (
+                <div key={update.id} className="p-4 border border-gray-200 rounded-lg hover:shadow-md transition-shadow">
+                  <div className="flex items-start justify-between mb-2">
+                    <div className={`px-3 py-1 rounded-full text-xs font-semibold ${getUpdateTypeColor(update.type)}`}>
+                      {update.type.toUpperCase()}
+                    </div>
+                    <span className="text-sm text-gray-500">
+                      {update.createdAt.toLocaleDateString()}
+                    </span>
+                  </div>
+                  <h3 className="font-semibold text-gray-900 mb-1">{update.title}</h3>
+                  <p className="text-gray-700 text-sm line-clamp-2">{update.description}</p>
+                  {update.expiration && (
+                    <p className="text-xs text-amber-600 mt-1">
+                      Expires: {update.expiration.toLocaleDateString()}
+                    </p>
+                  )}
+                </div>
+              ))
+            )}
           </div>
         </div>
 
@@ -187,20 +350,43 @@ export default function Dashboard({ onPageChange }: DashboardProps) {
             </button>
           </div>
           <div className="space-y-4">
-            {pendingDocuments.map((doc) => (
-              <div key={doc.id} className="flex items-center space-x-4 p-3 bg-accent-50 border border-accent-200 rounded-lg">
-                <DocumentTextIcon className="h-8 w-8 text-accent-600" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-lg font-semibold text-gray-900 truncate">{doc.title}</p>
-                  <p className="text-sm text-gray-600">{doc.description}</p>
-                </div>
-                <div className="flex-shrink-0">
-                  <span className="px-3 py-1 bg-accent-500 text-white text-sm font-semibold rounded-full">
-                    Action Required
-                  </span>
-                </div>
+            {getPendingDocuments().length === 0 ? (
+              <div className="text-center py-8 text-gray-500">
+                <DocumentTextIcon className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                <p>All documents are up to date!</p>
               </div>
-            ))}
+            ) : (
+              getPendingDocuments().slice(0, 5).map((doc) => (
+                <div key={doc.id} className="flex items-center space-x-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                  <DocumentTextIcon className="h-8 w-8 text-amber-600" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-lg font-semibold text-gray-900 truncate">
+                      {userData?.role === 'admin' ? doc.userName : 'Document'}
+                    </p>
+                    <p className="text-sm text-gray-600">
+                      Status: {doc.status.replace('_', ' ')} 
+                      {userData?.role === 'admin' && ` • Template ID: ${doc.documentTemplateId}`}
+                    </p>
+                    {doc.expiresAt && (
+                      <p className="text-xs text-red-600">
+                        Expires: {doc.expiresAt.toLocaleDateString()}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex-shrink-0">
+                    <span className={`px-3 py-1 text-white text-sm font-semibold rounded-full ${
+                      doc.status === 'not_started' ? 'bg-red-500' :
+                      doc.status === 'viewed' ? 'bg-yellow-500' :
+                      'bg-blue-500'
+                    }`}>
+                      {doc.status === 'not_started' ? 'Not Started' :
+                       doc.status === 'viewed' ? 'Viewed' :
+                       'In Progress'}
+                    </span>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
 
@@ -217,27 +403,39 @@ export default function Dashboard({ onPageChange }: DashboardProps) {
             </button>
           </div>
           <div className="space-y-4">
-            {recentQuestions.map((question) => (
-              <div key={question.id} className="p-4 border border-gray-200 rounded-lg hover:shadow-md transition-shadow">
-                <div className="flex items-start justify-between mb-2">
-                  <span className="px-3 py-1 bg-primary-100 text-primary-700 text-xs font-semibold rounded-full">
-                    {question.category}
-                  </span>
-                  <span className="text-sm text-gray-500">by {question.authorName}</span>
-                </div>
-                <h3 className="font-semibold text-gray-900 mb-2">{question.title}</h3>
-                <div className="flex items-center justify-between">
-                  <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
-                    question.isAnswered 
-                      ? 'bg-secondary-100 text-secondary-700' 
-                      : 'bg-destructive-100 text-destructive-700'
-                  }`}>
-                    {question.isAnswered ? 'Answered' : 'Needs Answer'}
-                  </span>
-                  <span className="text-sm text-gray-500">{question.upvotes} upvotes</span>
-                </div>
+            {recentQuestions.length === 0 ? (
+              <div className="text-center py-8 text-gray-500">
+                <QuestionMarkCircleIcon className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                <p>No recent questions</p>
               </div>
-            ))}
+            ) : (
+              recentQuestions.map((question) => (
+                <div key={question.id} className="p-4 border border-gray-200 rounded-lg hover:shadow-md transition-shadow">
+                  <div className="flex items-start justify-between mb-2">
+                    <span className="px-3 py-1 bg-primary-100 text-primary-700 text-xs font-semibold rounded-full">
+                      {question.category}
+                    </span>
+                    <span className="text-sm text-gray-500">
+                      {question.isAnonymous ? 'Anonymous' : `by ${question.authorName}`}
+                    </span>
+                  </div>
+                  <h3 className="font-semibold text-gray-900 mb-2 line-clamp-2">{question.title}</h3>
+                  <div className="flex items-center justify-between">
+                    <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
+                      question.isAnswered 
+                        ? 'bg-green-100 text-green-700' 
+                        : 'bg-red-100 text-red-700'
+                    }`}>
+                      {question.isAnswered ? `${question.answers?.length || 0} Answer${question.answers?.length !== 1 ? 's' : ''}` : 'Needs Answer'}
+                    </span>
+                    <span className="text-sm text-gray-500">{question.upvotes} upvote{question.upvotes !== 1 ? 's' : ''}</span>
+                  </div>
+                  <div className="mt-2 text-xs text-gray-500">
+                    {question.createdAt.toLocaleDateString()}
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
       </div>
@@ -245,7 +443,7 @@ export default function Dashboard({ onPageChange }: DashboardProps) {
       {/* Quick Actions */}
       <div className="card bg-gradient-to-r from-primary-50 to-secondary-50">
         <h2 className="text-xl font-bold text-gray-900 mb-6">Quick Actions</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <button
             onClick={() => onPageChange('complaints')}
             className="btn-primary flex items-center justify-center gap-3"
@@ -267,13 +465,13 @@ export default function Dashboard({ onPageChange }: DashboardProps) {
             <DocumentTextIcon className="h-6 w-6" />
             Upload Document
           </button>
-          <button
+          {/* <button
             onClick={() => onPageChange('resources')}
             className="btn-secondary flex items-center justify-center gap-3"
           >
             <MegaphoneIcon className="h-6 w-6" />
             Browse Resources
-          </button>
+          </button> */}
         </div>
       </div>
     </div>

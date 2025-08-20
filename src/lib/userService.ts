@@ -9,10 +9,12 @@ import {
   serverTimestamp,
   getDoc,
   onSnapshot,
-  Timestamp
+  Timestamp,
+  writeBatch
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { User } from '../types';
+import { createBirthdayEvent, removeBirthdayEventsByName } from './calendarService';
 
 export interface UserAction {
   id: string;
@@ -26,11 +28,26 @@ export interface UserAction {
 // Approve a user account
 export const approveUser = async (userId: string, approvedBy: string): Promise<void> => {
   try {
+    // Get user data to check for birthday
+    const userDoc = await getDoc(doc(db, 'users', userId));
+    const userData = userDoc.data();
+
     await updateDoc(doc(db, 'users', userId), {
       status: 'approved',
       approvedBy,
       approvedAt: serverTimestamp()
     });
+
+    // Create birthday calendar event if user has a birthday
+    if (userData?.birthday && userData?.name) {
+      try {
+        await createBirthdayEvent(userId, userData.name, userData.birthday.toDate(), approvedBy);
+        console.log(`Birthday event created for ${userData.name}`);
+      } catch (birthdayError) {
+        console.error('Error creating birthday event:', birthdayError);
+        // Don't fail the approval if birthday event creation fails
+      }
+    }
 
     // Log the action
     await logUserAction(userId, 'approved', approvedBy);
@@ -45,6 +62,10 @@ export const approveUser = async (userId: string, approvedBy: string): Promise<v
 // Disable a user account
 export const disableUser = async (userId: string, disabledBy: string, reason?: string): Promise<void> => {
   try {
+    // Get user data to remove birthday events
+    const userDoc = await getDoc(doc(db, 'users', userId));
+    const userData = userDoc.data();
+
     const updateData: any = {
       status: 'disabled',
       disabledBy,
@@ -57,6 +78,17 @@ export const disableUser = async (userId: string, disabledBy: string, reason?: s
     }
 
     await updateDoc(doc(db, 'users', userId), updateData);
+
+    // Remove birthday calendar events if user has them
+    if (userData?.name) {
+      try {
+        await removeBirthdayEventsByName(userData.name);
+        console.log(`Birthday events removed for ${userData.name}`);
+      } catch (birthdayError) {
+        console.error('Error removing birthday events:', birthdayError);
+        // Don't fail the disable if birthday event removal fails
+      }
+    }
 
     // Log the action
     await logUserAction(userId, 'disabled', disabledBy, reason);
@@ -71,12 +103,27 @@ export const disableUser = async (userId: string, disabledBy: string, reason?: s
 // Enable a previously disabled user
 export const enableUser = async (userId: string, enabledBy: string): Promise<void> => {
   try {
+    // Get user data to recreate birthday events
+    const userDoc = await getDoc(doc(db, 'users', userId));
+    const userData = userDoc.data();
+
     await updateDoc(doc(db, 'users', userId), {
       status: 'approved',
       enabledBy,
       enabledAt: serverTimestamp()
       // Note: We don't set disabled fields to null, just leave them as is for audit trail
     });
+
+    // Recreate birthday calendar event if user has a birthday
+    if (userData?.birthday && userData?.name) {
+      try {
+        await createBirthdayEvent(userId, userData.name, userData.birthday.toDate(), enabledBy);
+        console.log(`Birthday event recreated for ${userData.name}`);
+      } catch (birthdayError) {
+        console.error('Error recreating birthday event:', birthdayError);
+        // Don't fail the enable if birthday event creation fails
+      }
+    }
 
     // Log the action
     await logUserAction(userId, 'enabled', enabledBy);
@@ -107,6 +154,8 @@ export const getPendingUsers = async (): Promise<User[]> => {
         role: data.role,
         status: data.status,
         avatar: data.avatar,
+        birthday: data.birthday?.toDate(),
+        isMasterAdmin: data.email?.toLowerCase() === 'hashimosman@synergyhomecare.com',
         createdAt: data.createdAt?.toDate() || new Date(),
         lastLoginAt: data.lastLoginAt?.toDate(),
         approvedBy: data.approvedBy,
@@ -144,6 +193,8 @@ export const getUsers = async (statusFilter?: 'pending' | 'approved' | 'disabled
         role: data.role,
         status: data.status,
         avatar: data.avatar,
+        birthday: data.birthday?.toDate(),
+        isMasterAdmin: data.email?.toLowerCase() === 'hashimosman@synergyhomecare.com',
         createdAt: data.createdAt?.toDate() || new Date(),
         lastLoginAt: data.lastLoginAt?.toDate(),
         approvedBy: data.approvedBy,
@@ -171,6 +222,8 @@ export const getUserById = async (userId: string): Promise<User | null> => {
         role: data.role,
         status: data.status,
         avatar: data.avatar,
+        birthday: data.birthday?.toDate(),
+        isMasterAdmin: data.email?.toLowerCase() === 'hashimosman@synergyhomecare.com',
         createdAt: data.createdAt?.toDate() || new Date(),
         lastLoginAt: data.lastLoginAt?.toDate(),
         approvedBy: data.approvedBy,
@@ -204,6 +257,8 @@ export const subscribeToPendingUsers = (callback: (users: User[]) => void) => {
         role: data.role,
         status: data.status,
         avatar: data.avatar,
+        birthday: data.birthday?.toDate(),
+        isMasterAdmin: data.email?.toLowerCase() === 'hashimosman@synergyhomecare.com',
         createdAt: data.createdAt?.toDate() || new Date(),
         lastLoginAt: data.lastLoginAt?.toDate(),
         approvedBy: data.approvedBy,
@@ -284,6 +339,93 @@ export const incrementUserQuestionCount = async (userId: string): Promise<void> 
     });
   } catch (error) {
     console.error('Error incrementing question count:', error);
+    throw error;
+  }
+};
+
+// Promote user to admin (Master Admin only)
+export const promoteToAdmin = async (userId: string, promotedBy: string): Promise<void> => {
+  try {
+    await updateDoc(doc(db, 'users', userId), {
+      role: 'admin',
+      promotedBy,
+      promotedAt: serverTimestamp()
+    });
+
+    // Log the action
+    await logUserAction(userId, 'promoted' as any, promotedBy);
+    
+    console.log(`User ${userId} promoted to admin by ${promotedBy}`);
+  } catch (error) {
+    console.error('Error promoting user to admin:', error);
+    throw error;
+  }
+};
+
+// Demote admin to user (Master Admin only)
+export const demoteFromAdmin = async (userId: string, demotedBy: string): Promise<void> => {
+  try {
+    await updateDoc(doc(db, 'users', userId), {
+      role: 'user',
+      demotedBy,
+      demotedAt: serverTimestamp()
+    });
+
+    // Log the action
+    await logUserAction(userId, 'demoted' as any, demotedBy);
+    
+    console.log(`User ${userId} demoted from admin by ${demotedBy}`);
+  } catch (error) {
+    console.error('Error demoting user from admin:', error);
+    throw error;
+  }
+};
+
+// Completely delete user and all their data (Master Admin only)
+export const deleteUserCompletely = async (userId: string, deletedBy: string): Promise<void> => {
+  try {
+    // Get user data before deletion
+    const userDoc = await getDoc(doc(db, 'users', userId));
+    if (!userDoc.exists()) {
+      throw new Error('User not found');
+    }
+    
+    const userData = userDoc.data();
+
+    // Remove birthday events if they exist
+    if (userData?.name) {
+      try {
+        await removeBirthdayEventsByName(userData.name);
+        console.log(`Birthday events removed for ${userData.name}`);
+      } catch (birthdayError) {
+        console.error('Error removing birthday events:', birthdayError);
+        // Continue with deletion even if birthday removal fails
+      }
+    }
+
+    // Delete all user-related data
+    const batch = writeBatch(db);
+    
+    // Delete user document
+    batch.delete(doc(db, 'users', userId));
+    
+    // Note: In a real implementation, you would also delete:
+    // - User's questions from 'questions' collection
+    // - User's answers from 'answers' collection  
+    // - User's complaints from 'complaints' collection
+    // - User's notifications from 'notifications' collection
+    // - User's document statuses from 'userDocuments' collection
+    // - Any other user-related data
+    
+    // For now, we'll just delete the user document
+    await batch.commit();
+
+    // Log the action in a separate collection for audit
+    await logUserAction(userId, 'deleted' as any, deletedBy, `User completely deleted: ${userData.name} (${userData.email})`);
+    
+    console.log(`User ${userId} completely deleted by ${deletedBy}`);
+  } catch (error) {
+    console.error('Error deleting user completely:', error);
     throw error;
   }
 };

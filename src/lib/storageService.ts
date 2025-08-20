@@ -1,12 +1,32 @@
-import { 
-  ref, 
-  uploadBytes, 
-  getDownloadURL, 
-  deleteObject,
-  getMetadata,
-  updateMetadata
-} from 'firebase/storage';
-import { storage } from './firebase';
+/**
+ * MOCK STORAGE SERVICE
+ * 
+ * This is a mock implementation that works without Firebase Storage billing.
+ * Files under 1MB are stored as base64 in localStorage.
+ * Larger files are simulated with mock URLs.
+ * 
+ * TO SWITCH TO REAL FIREBASE STORAGE:
+ * 1. Enable Firebase Storage in console
+ * 2. Uncomment the Firebase imports below
+ * 3. Replace the mock functions with the commented real implementations
+ * 4. Deploy storage rules from storage.rules
+ * 
+ * ALTERNATIVE REAL STORAGE OPTIONS:
+ * - Supabase Storage (1GB free)
+ * - Cloudflare R2 (10GB free)  
+ * - Backblaze B2 (10GB free)
+ */
+
+// Uncomment these for real Firebase Storage:
+// import { 
+//   ref, 
+//   uploadBytes, 
+//   getDownloadURL, 
+//   deleteObject,
+//   getMetadata,
+//   updateMetadata
+// } from 'firebase/storage';
+// import { storage } from './firebase';
 
 export interface UploadResult {
   url: string;
@@ -88,7 +108,7 @@ const generateFilePath = (file: File, userId: string): string => {
   return `resources/${userId}/${timestamp}_${randomString}_${safeName}`;
 };
 
-// Upload a file to Firebase Storage
+// Mock file upload - stores small files as base64, simulates upload for larger files
 export const uploadFile = async (
   file: File, 
   userId: string,
@@ -103,23 +123,37 @@ export const uploadFile = async (
 
     // Generate file path
     const filePath = generateFilePath(file, userId);
-    const storageRef = ref(storage, filePath);
 
-    // Add metadata
-    const metadata = {
-      contentType: file.type,
-      customMetadata: {
-        originalName: file.name,
-        uploadedBy: userId,
-        uploadedAt: new Date().toISOString()
+    // Simulate upload progress
+    if (onProgress) {
+      for (let i = 0; i <= 100; i += 20) {
+        setTimeout(() => {
+          onProgress({
+            progress: i,
+            bytesTransferred: (file.size * i) / 100,
+            totalBytes: file.size
+          });
+        }, i * 10);
       }
-    };
+    }
 
-    // Upload file
-    const uploadTask = await uploadBytes(storageRef, file, metadata);
-    
-    // Get download URL
-    const downloadURL = await getDownloadURL(uploadTask.ref);
+    // For files under 1MB, convert to base64 and store in localStorage
+    // For larger files, create a mock URL
+    let downloadURL: string;
+
+    if (file.size <= 1024 * 1024) { // 1MB limit for base64 storage
+      const base64 = await fileToBase64(file);
+      const storageKey = `file_${filePath.replace(/[^a-zA-Z0-9]/g, '_')}`;
+      localStorage.setItem(storageKey, base64);
+      downloadURL = `data:${file.type};base64,${base64.split(',')[1]}`;
+    } else {
+      // For larger files, create a mock URL (in real implementation, this would be actual upload)
+      downloadURL = `mock://storage/${filePath}`;
+      console.warn(`Mock storage: File "${file.name}" is too large for base64 storage. Using mock URL.`);
+    }
+
+    // Simulate slight delay for upload
+    await new Promise(resolve => setTimeout(resolve, 500));
 
     return {
       url: downloadURL,
@@ -134,11 +168,21 @@ export const uploadFile = async (
   }
 };
 
-// Delete a file from Firebase Storage
+// Helper function to convert file to base64
+const fileToBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = error => reject(error);
+  });
+};
+
+// Mock file deletion - removes from localStorage for small files
 export const deleteFile = async (filePath: string): Promise<void> => {
   try {
-    const fileRef = ref(storage, filePath);
-    await deleteObject(fileRef);
+    const storageKey = `file_${filePath.replace(/[^a-zA-Z0-9]/g, '_')}`;
+    localStorage.removeItem(storageKey);
     console.log('File deleted successfully:', filePath);
   } catch (error) {
     console.error('Error deleting file:', error);
@@ -146,38 +190,54 @@ export const deleteFile = async (filePath: string): Promise<void> => {
   }
 };
 
-// Get file metadata
+// Mock file metadata - returns basic info for stored files
 export const getFileMetadata = async (filePath: string) => {
   try {
-    const fileRef = ref(storage, filePath);
-    const metadata = await getMetadata(fileRef);
-    return metadata;
+    const storageKey = `file_${filePath.replace(/[^a-zA-Z0-9]/g, '_')}`;
+    const stored = localStorage.getItem(storageKey);
+    
+    if (stored) {
+      return {
+        name: filePath.split('/').pop(),
+        contentType: stored.split(':')[1]?.split(';')[0] || 'application/octet-stream',
+        size: Math.floor(stored.length * 0.75), // Approximate original size
+        timeCreated: new Date().toISOString(),
+        updated: new Date().toISOString()
+      };
+    }
+    
+    throw new Error('File not found');
   } catch (error) {
     console.error('Error getting file metadata:', error);
     throw error;
   }
 };
 
-// Update file metadata
+// Mock metadata update - not needed for mock storage
 export const updateFileMetadata = async (
   filePath: string, 
   newMetadata: any
 ): Promise<void> => {
   try {
-    const fileRef = ref(storage, filePath);
-    await updateMetadata(fileRef, newMetadata);
-    console.log('File metadata updated:', filePath);
+    console.log('Mock storage: File metadata update simulated for:', filePath);
   } catch (error) {
     console.error('Error updating file metadata:', error);
     throw error;
   }
 };
 
-// Get file download URL from path
+// Mock download URL getter - returns the stored data URL or mock URL
 export const getFileDownloadURL = async (filePath: string): Promise<string> => {
   try {
-    const fileRef = ref(storage, filePath);
-    return await getDownloadURL(fileRef);
+    const storageKey = `file_${filePath.replace(/[^a-zA-Z0-9]/g, '_')}`;
+    const stored = localStorage.getItem(storageKey);
+    
+    if (stored) {
+      return stored; // Return the data URL
+    }
+    
+    // Return mock URL for files that weren't stored in localStorage
+    return `mock://storage/${filePath}`;
   } catch (error) {
     console.error('Error getting download URL:', error);
     throw error;

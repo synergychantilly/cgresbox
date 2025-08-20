@@ -17,6 +17,9 @@ export * from './storageService';
 // Q&A services
 export * from './qaService';
 
+// Complaints services
+export * from './complaintsService';
+
 // Type exports
 export * from '../types/calendar';
 export * from '../types/updates';

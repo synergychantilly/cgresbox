@@ -34,13 +34,19 @@ const getNavigation = (isAdmin: boolean): NavigationItem[] => {
     { id: 'dashboard', name: 'Dashboard', icon: HomeIcon, description: 'Overview and quick access' },
     { id: 'calendar', name: 'Calendar', icon: CalendarDaysIcon, description: 'Schedule and important dates' },
     { id: 'updates', name: 'Updates', icon: MegaphoneIcon, description: 'Latest announcements' },
-    { id: 'resources', name: 'Resources', icon: FolderIcon, description: 'Documents and materials' },
+    // { id: 'resources', name: 'Resources', icon: FolderIcon, description: 'Documents and materials' }, // Hidden for now
     { id: 'qa', name: 'Q&A', icon: QuestionMarkCircleIcon, description: 'Community support' },
     { id: 'complaints', name: 'Complaints', icon: ExclamationTriangleIcon, description: 'Report issues' },
     { id: 'documents', name: 'Documents', icon: DocumentTextIcon, description: 'Personal paperwork' },
   ];
 
   if (isAdmin) {
+    baseNavigation.push({
+      id: 'admin-documents',
+      name: 'Document Management',
+      icon: ShieldCheckIcon,
+      description: 'Manage document templates and tracking'
+    });
     baseNavigation.push({
       id: 'users',
       name: 'User Management',

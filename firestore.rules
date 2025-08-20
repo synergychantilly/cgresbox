@@ -76,17 +76,50 @@ service cloud.firestore {
       allow read: if isApprovedUser();
       allow create: if isApprovedUser() && request.auth.uid == request.resource.data.author;
       allow update: if isAdmin() || 
-        (isApprovedUser() && request.auth.uid == resource.data.author);
+        (isApprovedUser() && request.auth.uid == resource.data.author && 
+         // Users can only update content-related fields on their own questions
+         !('title' in request.resource.data.diff(resource.data).affectedKeys()) &&
+         !('content' in request.resource.data.diff(resource.data).affectedKeys()) &&
+         !('category' in request.resource.data.diff(resource.data).affectedKeys())) ||
+        (isApprovedUser() && 
+         // Any approved user can update upvotes, upvotedBy, isAnswered
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['upvotes', 'upvotedBy', 'isAnswered', 'updatedAt']));
       allow delete: if isAdmin();
     }
 
-    // Answers (subcollection of questions)
-    match /questions/{questionId}/answers/{answerId} {
+    // Answers (top-level collection)
+    match /answers/{answerId} {
       allow read: if isApprovedUser();
       allow create: if isApprovedUser() && request.auth.uid == request.resource.data.author;
       allow update: if isAdmin() || 
+        (isApprovedUser() && request.auth.uid == resource.data.author &&
+         // Users can only update content on their own answers
+         !('content' in request.resource.data.diff(resource.data).affectedKeys())) ||
+        (isApprovedUser() && 
+         // Any approved user can update upvotes, upvotedBy, isAccepted
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['upvotes', 'upvotedBy', 'isAccepted', 'updatedAt']));
+      allow delete: if isAdmin() || 
         (isApprovedUser() && request.auth.uid == resource.data.author);
+    }
+
+    // Edit Requests
+    match /editRequests/{requestId} {
+      allow read: if isAdmin() || 
+        (isApprovedUser() && request.auth.uid == resource.data.requestedBy);
+      allow create: if isApprovedUser() && request.auth.uid == request.resource.data.requestedBy;
+      allow update: if isAdmin(); // Only admins can approve/reject requests
       allow delete: if isAdmin();
+    }
+
+    // Notifications
+    match /notifications/{notificationId} {
+      allow read: if isApprovedUser() && request.auth.uid == resource.data.userId;
+      allow create: if isAdmin(); // Only system/admins create notifications
+      allow update: if isApprovedUser() && request.auth.uid == resource.data.userId &&
+        // Users can only mark as read
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
+      allow delete: if isAdmin() || 
+        (isApprovedUser() && request.auth.uid == resource.data.userId);
     }
 
     // Complaints
@@ -100,18 +133,41 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // Documents
-    match /documents/{documentId} {
+    // Document Categories
+    match /documentCategories/{categoryId} {
       allow read: if isApprovedUser();
       allow write: if isAdmin();
     }
 
-    // User document completions/status
+    // Document Templates
+    match /documentTemplates/{templateId} {
+      allow read: if isApprovedUser();
+      allow write: if isAdmin();
+    }
+
+    // User Document Status (new system)
     match /userDocuments/{userDocId} {
       allow read: if isAdmin() || 
         (isApprovedUser() && request.auth.uid == resource.data.userId);
-      allow write: if isAdmin() || 
+      allow create: if isAdmin() || 
         (isApprovedUser() && request.auth.uid == request.resource.data.userId);
+      allow update: if isAdmin() || 
+        (isApprovedUser() && request.auth.uid == resource.data.userId);
+      allow delete: if isAdmin();
+    }
+
+    // Document Webhook Events (for system use)
+    match /documentWebhookEvents/{eventId} {
+      allow read: if isAdmin();
+      allow create: if true; // Allow webhook service to create events
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Legacy Documents (keep for backward compatibility)
+    match /documents/{documentId} {
+      allow read: if isApprovedUser();
+      allow write: if isAdmin();
     }
 
     // Block access to all other collections
