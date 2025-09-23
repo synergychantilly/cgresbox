@@ -13,7 +13,8 @@ import {
   serverTimestamp,
   writeBatch,
   onSnapshot,
-  Timestamp
+  Timestamp,
+  deleteField
 } from 'firebase/firestore';
 import { db } from './firebase';
 import {
@@ -173,23 +174,62 @@ export const userDocumentService = {
   // Initialize user documents for all approved users when a new template is created
   async initializeForTemplate(templateId: string): Promise<void> {
     try {
-      // Call the Cloud Function to initialize user documents
-      const response = await fetch('/api/initializeUserDocuments', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ templateId }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to initialize user documents');
+      // Get all approved users (non-admin)
+      const usersQuery = query(
+        collection(db, 'users'),
+        where('status', '==', 'approved'),
+        where('role', '==', 'user')
+      );
+      const usersSnapshot = await getDocs(usersQuery);
+      
+      if (usersSnapshot.empty) {
+        console.log('No approved users found to initialize documents for');
+        return;
       }
 
-      const result = await response.json();
-      console.log('User documents initialized:', result);
+      const batch = writeBatch(db);
+      let batchCount = 0;
+
+      for (const userDoc of usersSnapshot.docs) {
+        const userId = userDoc.id;
+        const userData = userDoc.data();
+
+        // Check if user document already exists for this template
+        const existingQuery = query(
+          collection(db, USER_DOCUMENTS_COLLECTION),
+          where('userId', '==', userId),
+          where('documentTemplateId', '==', templateId)
+        );
+        const existingSnapshot = await getDocs(existingQuery);
+
+        if (existingSnapshot.empty) {
+          const userDocRef = doc(collection(db, USER_DOCUMENTS_COLLECTION));
+          batch.set(userDocRef, {
+            userId,
+            userName: userData.name || userData.email,
+            documentTemplateId: templateId,
+            status: 'not_started',
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+          batchCount++;
+
+          // Commit in batches of 500 (Firestore limit)
+          if (batchCount >= 500) {
+            await batch.commit();
+            batchCount = 0;
+          }
+        }
+      }
+
+      // Commit remaining documents
+      if (batchCount > 0) {
+        await batch.commit();
+      }
+
+      console.log(`User documents initialized for template ${templateId}`);
     } catch (error) {
-      console.error('Error initializing user documents:', error);
+      console.error('Error initializing user documents for template:', error);
       throw error;
     }
   },
@@ -301,6 +341,7 @@ export const userDocumentService = {
       declinedAt: doc.data().declinedAt?.toDate(),
       expiresAt: doc.data().expiresAt?.toDate(),
       lastReminderSent: doc.data().lastReminderSent?.toDate(),
+      manuallyCompletedAt: doc.data().manuallyCompletedAt?.toDate(),
       createdAt: doc.data().createdAt?.toDate(),
       updatedAt: doc.data().updatedAt?.toDate(),
     })) as UserDocumentStatus[];
@@ -321,6 +362,7 @@ export const userDocumentService = {
       declinedAt: doc.data().declinedAt?.toDate(),
       expiresAt: doc.data().expiresAt?.toDate(),
       lastReminderSent: doc.data().lastReminderSent?.toDate(),
+      manuallyCompletedAt: doc.data().manuallyCompletedAt?.toDate(),
       createdAt: doc.data().createdAt?.toDate(),
       updatedAt: doc.data().updatedAt?.toDate(),
     })) as UserDocumentStatus[];
@@ -345,6 +387,7 @@ export const userDocumentService = {
       declinedAt: doc.data().declinedAt?.toDate(),
       expiresAt: doc.data().expiresAt?.toDate(),
       lastReminderSent: doc.data().lastReminderSent?.toDate(),
+      manuallyCompletedAt: doc.data().manuallyCompletedAt?.toDate(),
       createdAt: doc.data().createdAt?.toDate(),
       updatedAt: doc.data().updatedAt?.toDate(),
     } as UserDocumentStatus;
@@ -363,6 +406,30 @@ export const userDocumentService = {
     const docRef = doc(db, USER_DOCUMENTS_COLLECTION, id);
     await updateDoc(docRef, {
       ...updates,
+      updatedAt: serverTimestamp(),
+    });
+  },
+
+  async manuallyCompleteDocument(userDocumentId: string, completedBy: string): Promise<void> {
+    const docRef = doc(db, USER_DOCUMENTS_COLLECTION, userDocumentId);
+    await updateDoc(docRef, {
+      status: 'completed',
+      completedAt: serverTimestamp(),
+      manuallyCompletedBy: completedBy,
+      manuallyCompletedAt: serverTimestamp(),
+      isManuallyCompleted: true,
+      updatedAt: serverTimestamp(),
+    });
+  },
+
+  async undoManualCompletion(userDocumentId: string): Promise<void> {
+    const docRef = doc(db, USER_DOCUMENTS_COLLECTION, userDocumentId);
+    await updateDoc(docRef, {
+      status: 'not_started',
+      completedAt: deleteField(),
+      manuallyCompletedBy: deleteField(),
+      manuallyCompletedAt: deleteField(),
+      isManuallyCompleted: false,
       updatedAt: serverTimestamp(),
     });
   },
@@ -403,6 +470,7 @@ export const userDocumentService = {
         declinedAt: doc.data().declinedAt?.toDate(),
         expiresAt: doc.data().expiresAt?.toDate(),
         lastReminderSent: doc.data().lastReminderSent?.toDate(),
+        manuallyCompletedAt: doc.data().manuallyCompletedAt?.toDate(),
         createdAt: doc.data().createdAt?.toDate(),
         updatedAt: doc.data().updatedAt?.toDate(),
       })) as UserDocumentStatus[];

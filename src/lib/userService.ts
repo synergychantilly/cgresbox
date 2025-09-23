@@ -15,6 +15,7 @@ import {
 import { db } from './firebase';
 import { User } from '../types';
 import { createBirthdayEvent, removeBirthdayEventsByName } from './calendarService';
+import { userDocumentService } from './documentsService';
 
 export interface UserAction {
   id: string;
@@ -46,6 +47,17 @@ export const approveUser = async (userId: string, approvedBy: string): Promise<v
       } catch (birthdayError) {
         console.error('Error creating birthday event:', birthdayError);
         // Don't fail the approval if birthday event creation fails
+      }
+    }
+
+    // Initialize user documents for all existing templates
+    if (userData?.name) {
+      try {
+        await userDocumentService.initializeForUser(userId, userData.name);
+        console.log(`Document tracking initialized for ${userData.name}`);
+      } catch (docError) {
+        console.error('Error initializing user documents:', docError);
+        // Don't fail the approval if document initialization fails
       }
     }
 

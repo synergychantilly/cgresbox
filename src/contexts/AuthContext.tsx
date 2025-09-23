@@ -15,8 +15,7 @@ import {
   collection,
   query,
   where,
-  getDocs,
-  Timestamp
+  getDocs
 } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { User } from '../types';
@@ -26,10 +25,9 @@ interface AuthContextType {
   userData: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, name: string, birthday?: Date) => Promise<void>;
+  register: (email: string, password: string, name: string) => Promise<void>;
   logout: () => Promise<void>;
   isAdmin: boolean;
-  isMasterAdmin: boolean;
   isApproved: boolean;
   refreshUserData: () => Promise<void>;
 }
@@ -58,8 +56,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const userDoc = await getDoc(doc(db, 'users', uid));
       if (userDoc.exists()) {
         const data = userDoc.data();
-        const isMasterAdmin = await checkMasterAdmin(data.email);
-        
         return {
           id: userDoc.id,
           name: data.name,
@@ -67,8 +63,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           role: data.role,
           status: data.status,
           avatar: data.avatar,
-          birthday: data.birthday?.toDate(),
-          isMasterAdmin,
           createdAt: data.createdAt?.toDate() || new Date(),
           lastLoginAt: data.lastLoginAt?.toDate(),
           approvedBy: data.approvedBy,
@@ -92,6 +86,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   const login = async (email: string, password: string) => {
+    setLoading(true);
     try {
       const result = await signInWithEmailAndPassword(auth, email, password);
       const userData = await fetchUserData(result.user.uid);
@@ -105,36 +100,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       } else {
         throw new Error('User data not found');
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error('Login error:', error);
-      
-      // Handle specific Firebase auth errors
-      if (error.code === 'auth/user-not-found') {
-        throw new Error('No account found with this email address. Would you like to create an account?');
-      } else if (error.code === 'auth/wrong-password') {
-        throw new Error('Incorrect password. Please check your password and try again.');
-      } else if (error.code === 'auth/invalid-email') {
-        throw new Error('Please enter a valid email address.');
-      } else if (error.code === 'auth/user-disabled') {
-        throw new Error('This account has been disabled. Please contact an administrator.');
-      } else if (error.code === 'auth/too-many-requests') {
-        throw new Error('Too many failed login attempts. Please try again later.');
-      } else if (error.code === 'auth/invalid-credential') {
-        throw new Error('Invalid email or password. Please check your credentials and try again.');
-      } else if (error.code === 'auth/invalid-login-credentials') {
-        throw new Error('Invalid email or password. Please check your credentials and try again.');
-      } else if (error.code === 'auth/missing-password') {
-        throw new Error('Please enter your password.');
-      } else if (error.code === 'auth/weak-password') {
-        throw new Error('Password should be at least 6 characters.');
-      } else {
-        console.error('Unhandled auth error code:', error.code);
-        throw new Error(error.message || 'Failed to log in. Please try again.');
-      }
+      throw error;
+    } finally {
+      setLoading(false);
     }
   };
 
-  const register = async (email: string, password: string, name: string, birthday?: Date) => {
+  const register = async (email: string, password: string, name: string) => {
     setLoading(true);
     try {
       const result = await createUserWithEmailAndPassword(auth, email, password);
@@ -147,20 +121,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         role: 'user',
         status: 'pending',
         createdAt: new Date(),
-        questionsAskedToday: 0,
-        ...(birthday && { birthday })
+        questionsAskedToday: 0
       };
 
-      const userDoc: any = {
+      await setDoc(doc(db, 'users', result.user.uid), {
         ...newUser,
         createdAt: serverTimestamp()
-      };
-
-      if (birthday) {
-        userDoc.birthday = Timestamp.fromDate(birthday);
-      }
-
-      await setDoc(doc(db, 'users', result.user.uid), userDoc);
+      });
 
       setUserData(newUser);
     } catch (error) {
@@ -182,10 +149,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  // Master admin check - Hashim Osman is the master admin
-  const checkMasterAdmin = async (email: string) => {
-    const MASTER_ADMIN_EMAIL = 'hashimosman@synergyhomecare.com';
-    return email.toLowerCase() === MASTER_ADMIN_EMAIL.toLowerCase();
+  // Initialize the default admin user
+  const initializeAdminUser = async () => {
+    // Don't try to check Firestore when not authenticated as it will fail due to security rules
+    // Instead, just make the admin creation function available
+    console.log('%c🔧 CareConnect Admin Setup', 'color: #3B82F6; font-size: 16px; font-weight: bold;');
+    console.log('%cTo create the admin user, run:', 'color: #059669; font-weight: bold;');
+    console.log('%ccreateAdminUser()', 'background: #F3F4F6; color: #1F2937; padding: 4px 8px; border-radius: 4px; font-family: monospace;');
+    console.log('%cOr create manually in Firebase Console Authentication section', 'color: #6B7280;');
   };
 
   useEffect(() => {
@@ -202,13 +173,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setLoading(false);
     });
 
-    // Master admin is already configured - no console setup needed
+    // Check for admin user on first load
+    initializeAdminUser();
 
     return unsubscribe;
   }, []);
 
   const isAdmin = userData?.role === 'admin';
-  const isMasterAdmin = userData?.isMasterAdmin === true;
   const isApproved = userData?.status === 'approved';
 
   const value: AuthContextType = {
@@ -219,7 +190,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     register,
     logout,
     isAdmin,
-    isMasterAdmin,
     isApproved,
     refreshUserData
   };

@@ -37,8 +37,17 @@ const getNavigation = (isAdmin: boolean): NavigationItem[] => {
     // { id: 'resources', name: 'Resources', icon: FolderIcon, description: 'Documents and materials' }, // Hidden for now
     { id: 'qa', name: 'Q&A', icon: QuestionMarkCircleIcon, description: 'Community support' },
     { id: 'complaints', name: 'Complaints', icon: ExclamationTriangleIcon, description: 'Report issues' },
-    { id: 'documents', name: 'Documents', icon: DocumentTextIcon, description: 'Personal paperwork' },
   ];
+
+  // Only add Documents section for regular users, not admins
+  if (!isAdmin) {
+    baseNavigation.push({
+      id: 'documents',
+      name: 'Documents',
+      icon: DocumentTextIcon,
+      description: 'Personal paperwork'
+    });
+  }
 
   if (isAdmin) {
     baseNavigation.push({

@@ -100,8 +100,13 @@ export default function Documents() {
                          template.description.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCategory = filterCategory === 'all' || template.categoryId === filterCategory;
     
+    // Exclude manually completed documents from user view
+    const status = getDocumentStatus(template.id);
+    if (status?.isManuallyCompleted) {
+      return false;
+    }
+    
     if (filterStatus !== 'all') {
-      const status = getDocumentStatus(template.id);
       const currentStatus = status?.status || 'not_started';
       if (filterStatus !== currentStatus) {
         return false;
@@ -119,12 +124,13 @@ export default function Documents() {
     });
   };
 
-  // Calculate statistics
-  const notStartedCount = userDocuments.filter(d => d.status === 'not_started').length;
-  const completedCount = userDocuments.filter(d => d.status === 'completed').length;
-  const inProgressCount = userDocuments.filter(d => d.status === 'started' || d.status === 'viewed').length;
-  const overdue = userDocuments.filter(d => documentUtils.isExpired(d)).length;
-  const expiringSoon = userDocuments.filter(d => documentUtils.isExpiringSoon(d)).length;
+  // Calculate statistics (exclude manually completed documents)
+  const activeUserDocuments = userDocuments.filter(d => !d.isManuallyCompleted);
+  const notStartedCount = activeUserDocuments.filter(d => d.status === 'not_started').length;
+  const completedCount = activeUserDocuments.filter(d => d.status === 'completed').length;
+  const inProgressCount = activeUserDocuments.filter(d => d.status === 'started' || d.status === 'viewed').length;
+  const overdue = activeUserDocuments.filter(d => documentUtils.isExpired(d)).length;
+  const expiringSoon = activeUserDocuments.filter(d => documentUtils.isExpiringSoon(d)).length;
 
   if (loading) {
     return (
@@ -455,7 +461,7 @@ export default function Documents() {
       )}
 
       {/* Documents Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
         {filteredTemplates.length > 0 ? (
           filteredTemplates.map((template) => {
             const status = getDocumentStatus(template.id);
@@ -475,7 +481,7 @@ export default function Documents() {
               >
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex-1 min-w-0">
-                    <h3 className="text-lg font-bold text-gray-900 mb-2 line-clamp-2">
+                    <h3 className="text-sm font-bold text-gray-900 mb-2 line-clamp-2">
                       {template.title}
                     </h3>
                     <div className="flex flex-wrap gap-2 mb-2">
@@ -496,11 +502,6 @@ export default function Documents() {
                   )}
                 </div>
                 
-                {template.description && (
-                  <p className="text-gray-600 text-sm mb-4 line-clamp-3">
-                    {template.description}
-                  </p>
-                )}
 
                 {/* Progress Bar */}
                 <div className="mb-4">
@@ -536,25 +537,8 @@ export default function Documents() {
                   </div>
                 </div>
 
-                {/* Tags */}
-                {template.tags && template.tags.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mb-4">
-                    {template.tags.slice(0, 3).map((tag, index) => (
-                      <span
-                        key={index}
-                        className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700"
-                      >
-                        <TagIcon className="h-3 w-3 mr-1" />
-                        {tag}
-                      </span>
-                    ))}
-                    {template.tags.length > 3 && (
-                      <span className="text-xs text-gray-500">+{template.tags.length - 3} more</span>
-                    )}
-                  </div>
-                )}
                 
-                <div className="flex justify-between items-center pt-4 border-t border-gray-100">
+                <div className="flex justify-between items-center pt-2 border-t border-gray-100">
                   <div className="flex items-center gap-2 text-xs text-gray-500">
                     <span>Valid for {template.expiryDays} days</span>
                   </div>

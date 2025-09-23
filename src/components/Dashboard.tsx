@@ -14,9 +14,10 @@ import { Question } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { getUpcomingCalendarEvents } from '../lib/calendarService';
 import { getActiveUpdates } from '../lib/updatesService';
-import { userDocumentService } from '../lib/documentsService';
+import { userDocumentService, documentTemplateService } from '../lib/documentsService';
 import { getQuestions } from '../lib/qaService';
 import { getUsers } from '../lib/userService';
+import { complaintsService } from '../lib/complaintsService';
 
 interface DashboardProps {
   onPageChange: (page: string) => void;
@@ -29,6 +30,8 @@ export default function Dashboard({ onPageChange }: DashboardProps) {
   const [userDocuments, setUserDocuments] = useState<UserDocumentStatus[]>([]);
   const [recentQuestions, setRecentQuestions] = useState<Question[]>([]);
   const [allUsers, setAllUsers] = useState<any[]>([]);
+  const [complaints, setComplaints] = useState<any[]>([]);
+  const [documentTemplates, setDocumentTemplates] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -45,23 +48,27 @@ export default function Dashboard({ onPageChange }: DashboardProps) {
           userData.role === 'admin' 
             ? userDocumentService.getAllUserDocuments()
             : userDocumentService.getUserDocuments(currentUser.uid),
-          getQuestions()
+          getQuestions(),
+          documentTemplateService.getAll() // Load templates for document names
         ];
 
-        // For admins, also load user data to filter by status
+        // For admins, also load user data and complaints
         if (userData.role === 'admin') {
           promises.push(getUsers('approved')); // Only get approved users
+          promises.push(complaintsService.getAllComplaints()); // Load complaints for admin
         }
 
         const results = await Promise.all(promises);
         
         // Destructure based on whether we're admin or not
         if (userData.role === 'admin') {
-          const [events, updates, documents, questions, users] = results as [
+          const [events, updates, documents, questions, templates, users, complaintsData] = results as [
             CalendarEvent[], 
             Update[], 
             UserDocumentStatus[], 
             Question[], 
+            any[],
+            any[],
             any[]
           ];
           
@@ -69,19 +76,23 @@ export default function Dashboard({ onPageChange }: DashboardProps) {
           setRecentUpdates(updates.slice(0, 3));
           setUserDocuments(documents);
           setRecentQuestions(questions.slice(0, 3));
+          setDocumentTemplates(templates);
           setAllUsers(users);
+          setComplaints(complaintsData);
         } else {
-          const [events, updates, documents, questions] = results as [
+          const [events, updates, documents, questions, templates] = results as [
             CalendarEvent[], 
             Update[], 
             UserDocumentStatus[], 
-            Question[]
+            Question[],
+            any[]
           ];
           
           setUpcomingEvents(events.slice(0, 5));
           setRecentUpdates(updates.slice(0, 3));
           setUserDocuments(documents);
           setRecentQuestions(questions.slice(0, 3));
+          setDocumentTemplates(templates);
         }
       } catch (error) {
         console.error('Error loading dashboard data:', error);
@@ -139,6 +150,21 @@ export default function Dashboard({ onPageChange }: DashboardProps) {
 
   const getUnansweredQuestions = () => {
     return recentQuestions.filter(question => !question.isAnswered);
+  };
+
+  const getDocumentName = (templateId: string) => {
+    const template = documentTemplates.find(t => t.id === templateId);
+    return template?.title || 'Unknown Document';
+  };
+
+  const getPendingComplaints = () => {
+    return complaints.filter(complaint => 
+      complaint.status === 'submitted' || complaint.status === 'reviewing' || complaint.status === 'investigating'
+    );
+  };
+
+  const stripHtmlTags = (html: string) => {
+    return html.replace(/<[^>]*>/g, '').substring(0, 100) + (html.length > 100 ? '...' : '');
   };
 
   if (loading) {
@@ -229,13 +255,19 @@ export default function Dashboard({ onPageChange }: DashboardProps) {
         <div className="card bg-gradient-to-r from-secondary-50 to-secondary-100 border-secondary-200">
           <div className="flex items-center">
             <div className="p-3 rounded-lg bg-secondary-600">
-              <DocumentTextIcon className="h-8 w-8 text-white" />
+              {userData?.role === 'admin' ? (
+                <ExclamationTriangleIcon className="h-8 w-8 text-white" />
+              ) : (
+                <DocumentTextIcon className="h-8 w-8 text-white" />
+              )}
             </div>
             <div className="ml-4">
               <p className="text-sm font-semibold text-secondary-700">
-                {userData?.role === 'admin' ? 'All Pending Docs' : 'Your Pending Docs'}
+                {userData?.role === 'admin' ? 'Pending Complaints' : 'Your Pending Docs'}
               </p>
-              <p className="text-2xl font-bold text-secondary-900">{getPendingDocuments().length}</p>
+              <p className="text-2xl font-bold text-secondary-900">
+                {userData?.role === 'admin' ? getPendingComplaints().length : getPendingDocuments().length}
+              </p>
             </div>
           </div>
         </div>
@@ -315,7 +347,11 @@ export default function Dashboard({ onPageChange }: DashboardProps) {
               </div>
             ) : (
               recentUpdates.map((update) => (
-                <div key={update.id} className="p-4 border border-gray-200 rounded-lg hover:shadow-md transition-shadow">
+                <div 
+                  key={update.id} 
+                  onClick={() => onPageChange('updates')}
+                  className="p-4 border border-gray-200 rounded-lg hover:shadow-md transition-all cursor-pointer hover:border-primary-300 hover:bg-gray-50"
+                >
                   <div className="flex items-start justify-between mb-2">
                     <div className={`px-3 py-1 rounded-full text-xs font-semibold ${getUpdateTypeColor(update.type)}`}>
                       {update.type.toUpperCase()}
@@ -324,10 +360,11 @@ export default function Dashboard({ onPageChange }: DashboardProps) {
                       {update.createdAt.toLocaleDateString()}
                     </span>
                   </div>
-                  <h3 className="font-semibold text-gray-900 mb-1">{update.title}</h3>
-                  <p className="text-gray-700 text-sm line-clamp-2">{update.description}</p>
+                  <h3 className="font-semibold text-gray-900 hover:text-primary-600 transition-colors">
+                    {update.title}
+                  </h3>
                   {update.expiration && (
-                    <p className="text-xs text-amber-600 mt-1">
+                    <p className="text-xs text-amber-600 mt-2">
                       Expires: {update.expiration.toLocaleDateString()}
                     </p>
                   )}
@@ -342,7 +379,7 @@ export default function Dashboard({ onPageChange }: DashboardProps) {
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-xl font-bold text-gray-900">Pending Actions</h2>
             <button
-              onClick={() => onPageChange('documents')}
+              onClick={() => onPageChange(userData?.role === 'admin' ? 'complaints' : 'documents')}
               className="text-primary-600 hover:text-primary-700 font-semibold flex items-center gap-1 text-lg"
             >
               View All
@@ -350,42 +387,77 @@ export default function Dashboard({ onPageChange }: DashboardProps) {
             </button>
           </div>
           <div className="space-y-4">
-            {getPendingDocuments().length === 0 ? (
-              <div className="text-center py-8 text-gray-500">
-                <DocumentTextIcon className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-                <p>All documents are up to date!</p>
-              </div>
-            ) : (
-              getPendingDocuments().slice(0, 5).map((doc) => (
-                <div key={doc.id} className="flex items-center space-x-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                  <DocumentTextIcon className="h-8 w-8 text-amber-600" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-lg font-semibold text-gray-900 truncate">
-                      {userData?.role === 'admin' ? doc.userName : 'Document'}
-                    </p>
-                    <p className="text-sm text-gray-600">
-                      Status: {doc.status.replace('_', ' ')} 
-                      {userData?.role === 'admin' && ` • Template ID: ${doc.documentTemplateId}`}
-                    </p>
-                    {doc.expiresAt && (
-                      <p className="text-xs text-red-600">
-                        Expires: {doc.expiresAt.toLocaleDateString()}
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex-shrink-0">
-                    <span className={`px-3 py-1 text-white text-sm font-semibold rounded-full ${
-                      doc.status === 'not_started' ? 'bg-red-500' :
-                      doc.status === 'viewed' ? 'bg-yellow-500' :
-                      'bg-blue-500'
-                    }`}>
-                      {doc.status === 'not_started' ? 'Not Started' :
-                       doc.status === 'viewed' ? 'Viewed' :
-                       'In Progress'}
-                    </span>
-                  </div>
+            {userData?.role === 'admin' ? (
+              // Admin sees pending complaints
+              getPendingComplaints().length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <ExclamationTriangleIcon className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                  <p>No pending complaints!</p>
                 </div>
-              ))
+              ) : (
+                getPendingComplaints().slice(0, 5).map((complaint) => (
+                  <div key={complaint.id} className="flex items-center space-x-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                    <ExclamationTriangleIcon className="h-8 w-8 text-red-600" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-lg font-semibold text-gray-900 truncate">
+                        {complaint.topic}
+                      </p>
+                      <p className="text-sm text-gray-600">
+                        From: {complaint.isAnonymous ? 'Anonymous' : complaint.submittedByName}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {complaint.submittedAt.toLocaleDateString()}
+                      </p>
+                    </div>
+                    <div className="flex-shrink-0">
+                      <span className={`px-3 py-1 text-white text-sm font-semibold rounded-full ${
+                        complaint.status === 'submitted' ? 'bg-red-500' :
+                        complaint.status === 'reviewing' ? 'bg-yellow-500' :
+                        'bg-blue-500'
+                      }`}>
+                        {complaint.status === 'submitted' ? 'New' :
+                         complaint.status === 'reviewing' ? 'Reviewing' :
+                         'Investigating'}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              )
+            ) : (
+              // Users see their pending documents
+              getPendingDocuments().length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <DocumentTextIcon className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                  <p>All documents are up to date!</p>
+                </div>
+              ) : (
+                getPendingDocuments().slice(0, 5).map((doc) => (
+                  <div key={doc.id} className="flex items-center space-x-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                    <DocumentTextIcon className="h-8 w-8 text-amber-600" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-lg font-semibold text-gray-900 truncate">
+                        {getDocumentName(doc.documentTemplateId)}
+                      </p>
+                      <p className="text-sm text-gray-600">
+                        {doc.status === 'not_started' ? 'Not Started' :
+                         doc.status === 'viewed' ? 'Viewed' :
+                         'In Progress'}
+                      </p>
+                    </div>
+                    <div className="flex-shrink-0">
+                      <span className={`px-3 py-1 text-white text-sm font-semibold rounded-full ${
+                        doc.status === 'not_started' ? 'bg-red-500' :
+                        doc.status === 'viewed' ? 'bg-yellow-500' :
+                        'bg-blue-500'
+                      }`}>
+                        {doc.status === 'not_started' ? 'Action Needed' :
+                         doc.status === 'viewed' ? 'Viewed' :
+                         'In Progress'}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              )
             )}
           </div>
         </div>

@@ -14,7 +14,10 @@ import {
   ClockIcon,
   ExclamationTriangleIcon,
   DocumentArrowDownIcon,
-  LinkIcon
+  LinkIcon,
+  HandThumbUpIcon,
+  ArrowUturnLeftIcon,
+  XMarkIcon
 } from '@heroicons/react/24/outline';
 import { DocumentCategory, DocumentTemplate, UserDocumentStatus } from '../types/documents';
 import {
@@ -29,8 +32,10 @@ import AddDocumentTemplateModal from './modals/AddDocumentTemplateModal';
 import EditDocumentTemplateModal from './modals/EditDocumentTemplateModal';
 import { getUsers } from '../lib/userService';
 import { User } from '../types';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function AdminDocuments() {
+  const { userData } = useAuth();
   const [activeTab, setActiveTab] = useState<'templates' | 'categories' | 'tracking' | 'debug'>('templates');
   const [categories, setCategories] = useState<DocumentCategory[]>([]);
   const [templates, setTemplates] = useState<DocumentTemplate[]>([]);
@@ -51,9 +56,29 @@ export default function AdminDocuments() {
   const [showEditTemplate, setShowEditTemplate] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<DocumentTemplate | null>(null);
 
+  // Notifications
+  const [notification, setNotification] = useState<{
+    type: 'success' | 'error' | 'info';
+    message: string;
+  } | null>(null);
+
   useEffect(() => {
     loadData();
   }, []);
+
+  // Auto-hide notifications after 4 seconds
+  useEffect(() => {
+    if (notification) {
+      const timer = setTimeout(() => {
+        setNotification(null);
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [notification]);
+
+  const showNotification = (type: 'success' | 'error' | 'info', message: string) => {
+    setNotification({ type, message });
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -71,6 +96,13 @@ export default function AdminDocuments() {
       // Filter out admin users, only show regular approved users
       const nonAdminUsers = usersData.filter(user => user.role === 'user');
       setApprovedUsers(nonAdminUsers);
+      
+      // Debug logging
+      console.log('=== LOAD DATA DEBUG ===');
+      console.log('All users:', usersData);
+      console.log('Non-admin users:', nonAdminUsers);
+      console.log('User documents:', userDocsData);
+      console.log('Templates:', templatesData);
     } catch (error) {
       console.error('Error loading data:', error);
     } finally {
@@ -137,6 +169,30 @@ export default function AdminDocuments() {
     return filteredUserDocuments.filter(doc => doc.userId === selectedUserId);
   };
 
+  const handleManuallyCompleteDocument = async (userDocumentId: string, documentName: string, userName: string) => {
+    if (!userData?.id) return;
+    
+    try {
+      await userDocumentService.manuallyCompleteDocument(userDocumentId, userData.id);
+      await loadData(); // Refresh data
+      showNotification('success', `✅ Successfully marked "${documentName}" as completed for ${userName}`);
+    } catch (error) {
+      console.error('Error manually completing document:', error);
+      showNotification('error', `❌ Failed to mark document as completed. Please try again.`);
+    }
+  };
+
+  const handleUndoManualCompletion = async (userDocumentId: string, documentName: string, userName: string) => {
+    try {
+      await userDocumentService.undoManualCompletion(userDocumentId);
+      await loadData(); // Refresh data
+      showNotification('info', `🔄 Undid manual completion of "${documentName}" for ${userName}`);
+    } catch (error) {
+      console.error('Error undoing manual completion:', error);
+      showNotification('error', `❌ Failed to undo manual completion. Please try again.`);
+    }
+  };
+
   // Filter user documents to only include non-admin users
   const nonAdminUserIds = new Set(approvedUsers.map(user => user.id));
   const filteredUserDocuments = userDocuments.filter(doc => nonAdminUserIds.has(doc.userId));
@@ -186,6 +242,27 @@ export default function AdminDocuments() {
           </p>
         </div>
       </div>
+
+      {/* Notification */}
+      {notification && (
+        <div 
+          className={`relative px-4 py-3 rounded-lg border-l-4 ${
+            notification.type === 'success' 
+              ? 'bg-green-50 border-green-400 text-green-700' 
+              : notification.type === 'error'
+              ? 'bg-red-50 border-red-400 text-red-700'
+              : 'bg-blue-50 border-blue-400 text-blue-700'
+          } flex justify-between items-center animate-in slide-in-from-top-2 duration-300`}
+        >
+          <span>{notification.message}</span>
+          <button
+            onClick={() => setNotification(null)}
+            className="text-current opacity-70 hover:opacity-100 ml-4"
+          >
+            <XMarkIcon className="h-5 w-5" />
+          </button>
+        </div>
+      )}
 
       {/* Statistics Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -286,7 +363,7 @@ export default function AdminDocuments() {
             }`}
           >
             <ChartBarIcon className="h-5 w-5 inline mr-2" />
-            User Tracking ({filteredUserDocuments.length})
+            User Tracking ({approvedUsers.length})
           </button>
           <button
             onClick={() => setActiveTab('debug')}
@@ -663,6 +740,20 @@ export default function AdminDocuments() {
                 </div>
               </div>
 
+              {/* Manual Completion Info */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <h4 className="text-sm font-semibold text-blue-900 mb-2">Manual Document Completion</h4>
+                <p className="text-blue-800 text-sm">
+                  You can manually mark documents as completed for users. Manually completed documents will:
+                </p>
+                <ul className="text-blue-700 text-sm mt-2 space-y-1 ml-4">
+                  <li>• Be marked as "Completed" in admin tracking</li>
+                  <li>• Be completely hidden from the user's document queue</li>
+                  <li>• Show a "Manually Completed" badge for admin reference</li>
+                  <li>• Can be undone if needed</li>
+                </ul>
+              </div>
+
               {/* User Stats Cards */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 {(() => {
@@ -765,9 +856,17 @@ export default function AdminDocuments() {
                               </div>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap">
-                              <div className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${documentUtils.getStatusColor(doc.status)}`}>
-                                {getStatusIcon(doc.status)}
-                                <span className="ml-1">{documentUtils.getStatusText(doc.status)}</span>
+                              <div className="flex flex-col gap-1">
+                                <div className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${documentUtils.getStatusColor(doc.status)}`}>
+                                  {getStatusIcon(doc.status)}
+                                  <span className="ml-1">{documentUtils.getStatusText(doc.status)}</span>
+                                </div>
+                                {doc.isManuallyCompleted && (
+                                  <div className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700 border border-blue-200">
+                                    <HandThumbUpIcon className="h-3 w-3 mr-1" />
+                                    Manually Completed
+                                  </div>
+                                )}
                               </div>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
@@ -808,7 +907,8 @@ export default function AdminDocuments() {
                               </div>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap">
-                              <div className="flex gap-2">
+                              <div className="flex flex-wrap gap-2">
+                                {/* Existing document actions */}
                                 {doc.status === 'completed' && doc.completedDocumentUrl && (
                                   <a
                                     href={doc.completedDocumentUrl}
@@ -845,8 +945,36 @@ export default function AdminDocuments() {
                                     DocuSeal
                                   </a>
                                 )}
-                                {doc.status === 'not_started' && (
-                                  <span className="text-gray-400 text-sm">No actions</span>
+                                
+                                {/* Manual completion actions */}
+                                {doc.status !== 'completed' && (
+                                  <button
+                                    onClick={() => {
+                                      const documentName = getTemplateName(doc.documentTemplateId);
+                                      const userName = getSelectedUser()?.name || 'User';
+                                      handleManuallyCompleteDocument(doc.id, documentName, userName);
+                                    }}
+                                    className="text-green-600 hover:text-green-700 flex items-center gap-1 text-sm bg-green-50 hover:bg-green-100 px-2 py-1 rounded border border-green-200 transition-colors"
+                                    title="Mark as completed manually"
+                                  >
+                                    <HandThumbUpIcon className="h-4 w-4" />
+                                    Mark Complete
+                                  </button>
+                                )}
+                                
+                                {doc.status === 'completed' && doc.isManuallyCompleted && (
+                                  <button
+                                    onClick={() => {
+                                      const documentName = getTemplateName(doc.documentTemplateId);
+                                      const userName = getSelectedUser()?.name || 'User';
+                                      handleUndoManualCompletion(doc.id, documentName, userName);
+                                    }}
+                                    className="text-orange-600 hover:text-orange-700 flex items-center gap-1 text-sm bg-orange-50 hover:bg-orange-100 px-2 py-1 rounded border border-orange-200 transition-colors"
+                                    title="Undo manual completion"
+                                  >
+                                    <ArrowUturnLeftIcon className="h-4 w-4" />
+                                    Undo
+                                  </button>
                                 )}
                               </div>
                             </td>
@@ -890,23 +1018,50 @@ export default function AdminDocuments() {
               <p className="text-gray-600 mb-4">
                 Ensures all approved users have entries for all document templates with default "not_started" status.
               </p>
-              <button
-                onClick={async () => {
-                  if (confirm('This will create missing user document entries. Continue?')) {
+              <div className="space-y-3">
+                <button
+                  onClick={async () => {
                     try {
+                      showNotification('info', '⏳ Synchronizing user documents...');
                       await userDocumentService.syncAllUserDocuments();
-                      alert('User documents synchronized successfully!');
-                      loadData(); // Refresh data
+                      await loadData(); // Refresh data
+                      showNotification('success', '✅ User documents synchronized successfully!');
                     } catch (error) {
                       console.error('Sync error:', error);
-                      alert('Failed to sync user documents. Check console for details.');
+                      showNotification('error', '❌ Failed to sync user documents. Check console for details.');
                     }
-                  }
-                }}
-                className="btn-primary"
-              >
-                Sync All User Documents
-              </button>
+                  }}
+                  className="btn-primary"
+                >
+                  Sync All User Documents
+                </button>
+                <button
+                  onClick={async () => {
+                    try {
+                      console.log('=== DEBUG INFO ===');
+                      console.log('Approved users:', approvedUsers);
+                      console.log('All user documents:', userDocuments);
+                      console.log('Templates:', templates);
+                      console.log('Expected entries:', approvedUsers.length * templates.length);
+                      console.log('Actual entries:', userDocuments.length);
+                      
+                      // Check which users are missing documents
+                      const usersWithoutDocs = approvedUsers.filter(user => 
+                        !userDocuments.some(doc => doc.userId === user.id)
+                      );
+                      console.log('Users without any documents:', usersWithoutDocs);
+                      
+                      showNotification('info', `🔍 Debug info logged to console. Expected: ${approvedUsers.length * templates.length}, Actual: ${userDocuments.length} entries`);
+                    } catch (error) {
+                      console.error('Debug error:', error);
+                      showNotification('error', '❌ Debug failed. Check console for details.');
+                    }
+                  }}
+                  className="btn-secondary"
+                >
+                  Debug User Documents
+                </button>
+              </div>
             </div>
 
             <div className="card">
@@ -922,13 +1077,13 @@ export default function AdminDocuments() {
                     console.log('Recent webhook events:', events);
                     
                     if (events.length === 0) {
-                      alert('No webhook events found. Make sure DocuSeal is configured to send webhooks.');
+                      showNotification('info', '⚠️ No webhook events found. Make sure DocuSeal is configured to send webhooks.');
                     } else {
-                      alert(`Found ${events.length} recent webhook events. Check browser console for details.`);
+                      showNotification('success', `📡 Found ${events.length} recent webhook events. Check browser console for details.`);
                     }
                   } catch (error) {
                     console.error('Error fetching webhook events:', error);
-                    alert('Failed to fetch webhook events. Check console for details.');
+                    showNotification('error', '❌ Failed to fetch webhook events. Check console for details.');
                   }
                 }}
                 className="btn-secondary"

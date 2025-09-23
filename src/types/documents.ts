@@ -44,6 +44,10 @@ export interface UserDocumentStatus {
   expiresAt?: Date;
   lastReminderSent?: Date;
   webhookData?: any; // Store raw webhook data for debugging
+  // Manual completion fields
+  isManuallyCompleted?: boolean; // Flag to indicate manual completion by admin
+  manuallyCompletedBy?: string; // Admin user ID who manually completed it
+  manuallyCompletedAt?: Date; // When it was manually completed
   createdAt: Date;
   updatedAt: Date;
 }
