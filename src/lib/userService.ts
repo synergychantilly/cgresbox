@@ -283,6 +283,37 @@ export const subscribeToPendingUsers = (callback: (users: User[]) => void) => {
   });
 };
 
+// Subscribe to all users for real-time updates
+export const subscribeToUsers = (callback: (users: User[]) => void) => {
+  const q = query(
+    collection(db, 'users'),
+    orderBy('createdAt', 'desc')
+  );
+
+  return onSnapshot(q, (querySnapshot) => {
+    const users = querySnapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        name: data.name,
+        email: data.email,
+        role: data.role,
+        status: data.status,
+        avatar: data.avatar,
+        birthday: data.birthday?.toDate(),
+        isMasterAdmin: data.email?.toLowerCase() === 'hashimosman@synergyhomecare.com',
+        createdAt: data.createdAt?.toDate() || new Date(),
+        lastLoginAt: data.lastLoginAt?.toDate(),
+        approvedBy: data.approvedBy,
+        approvedAt: data.approvedAt?.toDate(),
+        questionsAskedToday: data.questionsAskedToday || 0,
+        lastQuestionDate: data.lastQuestionDate?.toDate()
+      } as User;
+    });
+    callback(users);
+  });
+};
+
 // Log user actions for audit trail
 const logUserAction = async (userId: string, action: 'approved' | 'disabled' | 'enabled', performedBy: string, reason?: string): Promise<void> => {
   try {

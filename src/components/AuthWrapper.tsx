@@ -10,13 +10,24 @@ interface AuthWrapperProps {
 
 const AuthWrapper: React.FC<AuthWrapperProps> = ({ children }) => {
   const [isLoginMode, setIsLoginMode] = useState(true);
-  const { currentUser, userData, loading } = useAuth();
+  const { currentUser, userData, newHireSession, loading, isNewHire } = useAuth();
+
+  // Debug logging
+  console.log('🔍 AuthWrapper: Current state', {
+    loading,
+    isNewHire,
+    hasCurrentUser: !!currentUser,
+    hasUserData: !!userData,
+    hasNewHireSession: !!newHireSession,
+    userStatus: userData?.status
+  });
 
   const toggleMode = () => {
     setIsLoginMode(!isLoginMode);
   };
 
   if (loading) {
+    console.log('⏳ AuthWrapper: Showing loading screen');
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center">
         <div className="text-center">
@@ -27,8 +38,15 @@ const AuthWrapper: React.FC<AuthWrapperProps> = ({ children }) => {
     );
   }
 
+  // If new hire is authenticated, show the main app (they have restricted access)
+  if (isNewHire && newHireSession) {
+    console.log('🆕 AuthWrapper: New hire authenticated, showing main app');
+    return <>{children}</>;
+  }
+
   // If no user is authenticated, show login/register
   if (!currentUser || !userData) {
+    console.log('👤 AuthWrapper: No user authenticated, showing login/register');
     return isLoginMode ? (
       <Login onToggleMode={toggleMode} />
     ) : (
@@ -38,6 +56,7 @@ const AuthWrapper: React.FC<AuthWrapperProps> = ({ children }) => {
 
   // If user is authenticated but not approved, show pending approval
   if (userData.status === 'pending') {
+    console.log('⏳ AuthWrapper: User pending approval');
     return <PendingApproval />;
   }
 
@@ -71,6 +90,7 @@ const AuthWrapper: React.FC<AuthWrapperProps> = ({ children }) => {
   }
 
   // If user is approved, show the main app
+  console.log('✅ AuthWrapper: User approved, showing main app');
   return <>{children}</>;
 };
 

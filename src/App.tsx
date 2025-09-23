@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AuthProvider } from './contexts/AuthContext';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import AuthWrapper from './components/AuthWrapper';
 import Layout from './components/Layout';
 import Dashboard from './components/Dashboard';
@@ -11,16 +11,36 @@ import Complaints from './components/Complaints';
 import Documents from './components/Documents';
 import AdminDocuments from './components/AdminDocuments';
 import UserManagement from './components/UserManagement';
+import UserTracking from './components/UserTracking';
 import { createAdminUser, createAdminUserDocument, checkAdminUserDocument } from './lib/adminSetup';
 
 function AppContent() {
-  const [currentPage, setCurrentPage] = useState('dashboard');
+  const { isNewHire } = useAuth();
+  const [currentPage, setCurrentPage] = useState(isNewHire ? 'documents' : 'dashboard');
+
+  console.log('📱 AppContent: Current state', { isNewHire, currentPage });
 
   const handlePageChange = (page: string) => {
+    console.log('📱 AppContent: Page change requested', page);
+    // New hires can only access documents
+    if (isNewHire && page !== 'documents') {
+      console.log('📱 AppContent: Page change blocked for new hire');
+      return;
+    }
     setCurrentPage(page);
   };
 
+  // Update current page when new hire status changes
+  React.useEffect(() => {
+    console.log('📱 AppContent: useEffect triggered', { isNewHire, currentPage });
+    if (isNewHire && currentPage !== 'documents') {
+      console.log('📱 AppContent: Setting page to documents for new hire');
+      setCurrentPage('documents');
+    }
+  }, [isNewHire, currentPage]);
+
   const renderCurrentPage = () => {
+    console.log('📱 AppContent: Rendering page', currentPage);
     switch (currentPage) {
       case 'dashboard':
         return <Dashboard onPageChange={handlePageChange} />;
@@ -35,11 +55,14 @@ function AppContent() {
       case 'complaints':
         return <Complaints />;
       case 'documents':
+        console.log('📱 AppContent: Rendering Documents component');
         return <Documents />;
       case 'admin-documents':
         return <AdminDocuments />;
       case 'users':
         return <UserManagement />;
+      case 'user-tracking':
+        return <UserTracking />;
       default:
         return <Dashboard onPageChange={handlePageChange} />;
     }

@@ -24,7 +24,7 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Documents() {
-  const { userData } = useAuth();
+  const { userData, newHireSession, isNewHire } = useAuth();
   const [categories, setCategories] = useState<DocumentCategory[]>([]);
   const [templates, setTemplates] = useState<DocumentTemplate[]>([]);
   const [userDocuments, setUserDocuments] = useState<UserDocumentStatus[]>([]);
@@ -35,26 +35,45 @@ export default function Documents() {
   const [selectedDocument, setSelectedDocument] = useState<{ template: DocumentTemplate; status: UserDocumentStatus } | null>(null);
 
   useEffect(() => {
+    console.log('📄 Documents: useEffect triggered', { userData: !!userData, newHireSession: !!newHireSession, isNewHire });
     loadData();
-  }, [userData]);
+  }, [userData, newHireSession]);
 
   const loadData = async () => {
-    if (!userData) return;
+    // For regular users, need userData. For new hires, need newHireSession
+    if (!userData && !isNewHire) {
+      console.log('📄 Documents: No user data and not new hire, returning');
+      return;
+    }
+    
+    if (isNewHire && !newHireSession) {
+      console.log('📄 Documents: New hire but no session, returning');
+      return;
+    }
+
+    console.log('📄 Documents: Loading data...');
     
     setLoading(true);
     try {
+      // Determine user ID - for new hires, use session info
+      const userId = isNewHire ? `newhire_${newHireSession?.id}` : userData?.id;
+      
+      console.log('📄 Documents: Using user ID:', userId);
+      
       const [categoriesData, templatesData, userDocsData] = await Promise.all([
         documentCategoryService.getAll(),
         documentTemplateService.getAll(),
-        userDocumentService.getUserDocuments(userData.id)
+        userDocumentService.getUserDocuments(userId!)
       ]);
       setCategories(categoriesData);
       setTemplates(templatesData);
       setUserDocuments(userDocsData);
+      console.log('📄 Documents: Data loaded successfully');
     } catch (error) {
-      console.error('Error loading documents:', error);
+      console.error('📄 Documents: Error loading documents:', error);
     } finally {
       setLoading(false);
+      console.log('📄 Documents: Loading set to false');
     }
   };
 
@@ -74,7 +93,27 @@ export default function Documents() {
   };
 
   const getDocumentStatus = (templateId: string) => {
-    return userDocuments.find(doc => doc.documentTemplateId === templateId);
+    const existingDoc = userDocuments.find(doc => doc.documentTemplateId === templateId);
+    
+    // If found, return it
+    if (existingDoc) {
+      return existingDoc;
+    }
+    
+    // For new hires, if no document exists, create a virtual "not_started" status
+    if (isNewHire) {
+      return {
+        id: `virtual-${templateId}`,
+        userId: newHireSession?.id || '',
+        userName: newHireSession ? `${newHireSession.firstName} ${newHireSession.lastName}` : '',
+        documentTemplateId: templateId,
+        status: 'not_started' as const,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+    }
+    
+    return undefined;
   };
 
   const getStatusIcon = (status: UserDocumentStatus['status']) => {
@@ -125,12 +164,39 @@ export default function Documents() {
   };
 
   // Calculate statistics (exclude manually completed documents)
-  const activeUserDocuments = userDocuments.filter(d => !d.isManuallyCompleted);
-  const notStartedCount = activeUserDocuments.filter(d => d.status === 'not_started').length;
-  const completedCount = activeUserDocuments.filter(d => d.status === 'completed').length;
-  const inProgressCount = activeUserDocuments.filter(d => d.status === 'started' || d.status === 'viewed').length;
-  const overdue = activeUserDocuments.filter(d => documentUtils.isExpired(d)).length;
-  const expiringSoon = activeUserDocuments.filter(d => documentUtils.isExpiringSoon(d)).length;
+  // For new hires, we need to ensure all templates are counted
+  const getDocumentStatistics = () => {
+    let activeUserDocuments = userDocuments.filter(d => !d.isManuallyCompleted);
+    
+    // For new hires, if they don't have documents for all templates, create virtual ones
+    if (isNewHire && templates.length > 0) {
+      const existingTemplateIds = activeUserDocuments.map(d => d.documentTemplateId);
+      const missingTemplates = templates.filter(t => !existingTemplateIds.includes(t.id));
+      
+      // Create virtual document statuses for missing templates
+      const virtualDocuments = missingTemplates.map(template => ({
+        id: `virtual-${template.id}`,
+        userId: newHireSession?.id || '',
+        userName: newHireSession ? `${newHireSession.firstName} ${newHireSession.lastName}` : '',
+        documentTemplateId: template.id,
+        status: 'not_started' as const,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }));
+      
+      activeUserDocuments = [...activeUserDocuments, ...virtualDocuments];
+    }
+    
+    const notStartedCount = activeUserDocuments.filter(d => d.status === 'not_started').length;
+    const completedCount = activeUserDocuments.filter(d => d.status === 'completed').length;
+    const inProgressCount = activeUserDocuments.filter(d => d.status === 'started' || d.status === 'viewed').length;
+    const overdue = activeUserDocuments.filter(d => documentUtils.isExpired(d)).length;
+    const expiringSoon = activeUserDocuments.filter(d => documentUtils.isExpiringSoon(d)).length;
+    
+    return { notStartedCount, completedCount, inProgressCount, overdue, expiringSoon };
+  };
+  
+  const { notStartedCount, completedCount, inProgressCount, overdue, expiringSoon } = getDocumentStatistics();
 
   if (loading) {
     return (

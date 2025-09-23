@@ -19,16 +19,21 @@ import {
 } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { User } from '../types';
+import { NewHireSession, verifyNewHire, createNewHireSession, getNewHireSession } from '../lib/newHireService';
 
 interface AuthContextType {
   currentUser: FirebaseUser | null;
   userData: User | null;
+  newHireSession: NewHireSession | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, name: string) => Promise<void>;
+  loginAsNewHire: (firstName: string, lastName: string, zipCode: string) => Promise<void>;
   logout: () => Promise<void>;
   isAdmin: boolean;
   isApproved: boolean;
+  isNewHire: boolean;
+  isMasterAdmin: boolean;
   refreshUserData: () => Promise<void>;
 }
 
@@ -49,6 +54,7 @@ interface AuthProviderProps {
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
   const [userData, setUserData] = useState<User | null>(null);
+  const [newHireSession, setNewHireSession] = useState<NewHireSession | null>(null);
   const [loading, setLoading] = useState(true);
 
   const fetchUserData = async (uid: string): Promise<User | null> => {
@@ -138,11 +144,42 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
+  const loginAsNewHire = async (firstName: string, lastName: string, zipCode: string) => {
+    setLoading(true);
+    try {
+      const newHire = await verifyNewHire(firstName, lastName, zipCode);
+      if (!newHire) {
+        throw new Error('New hire not found or invalid credentials');
+      }
+      
+      const sessionId = await createNewHireSession(newHire);
+      const session = await getNewHireSession(sessionId);
+      
+      if (!session) {
+        throw new Error('Failed to create new hire session');
+      }
+      
+      setNewHireSession(session);
+      // Store session ID in localStorage for persistence
+      localStorage.setItem('newHireSessionId', sessionId);
+    } catch (error) {
+      console.error('New hire login error:', error);
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const logout = async () => {
     try {
-      await firebaseSignOut(auth);
+      if (currentUser) {
+        await firebaseSignOut(auth);
+      }
       setCurrentUser(null);
       setUserData(null);
+      setNewHireSession(null);
+      // Clear new hire session from localStorage
+      localStorage.removeItem('newHireSessionId');
     } catch (error) {
       console.error('Logout error:', error);
       throw error;
@@ -160,37 +197,84 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   useEffect(() => {
+    console.log('🔄 AuthContext: Starting authentication check');
+    
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      console.log('🔐 AuthContext: Auth state changed', user ? 'User logged in' : 'No user');
       setCurrentUser(user);
       
       if (user) {
         const userData = await fetchUserData(user.uid);
         setUserData(userData);
+        console.log('👤 AuthContext: User data loaded', userData?.name);
       } else {
         setUserData(null);
+        console.log('👤 AuthContext: No user data');
       }
       
       setLoading(false);
+      console.log('✅ AuthContext: Loading set to false (auth state change)');
     });
+
+    // Check for existing new hire session
+    const checkNewHireSession = async () => {
+      console.log('🆕 AuthContext: Checking for new hire session');
+      const sessionId = localStorage.getItem('newHireSessionId');
+      if (sessionId) {
+        console.log('🔍 AuthContext: Found session ID in localStorage', sessionId);
+        try {
+          const session = await getNewHireSession(sessionId);
+          if (session) {
+            console.log('✅ AuthContext: Valid new hire session found', session.firstName, session.lastName);
+            setNewHireSession(session);
+          } else {
+            console.log('❌ AuthContext: Invalid session, removing from localStorage');
+            localStorage.removeItem('newHireSessionId');
+          }
+        } catch (error) {
+          console.error('❌ AuthContext: Error checking new hire session:', error);
+          localStorage.removeItem('newHireSessionId');
+        }
+      } else {
+        console.log('🔍 AuthContext: No session ID found in localStorage');
+      }
+      setLoading(false);
+      console.log('✅ AuthContext: Loading set to false (new hire check)');
+    };
 
     // Check for admin user on first load
     initializeAdminUser();
+
+    // Check authentication status
+    if (!auth.currentUser) {
+      console.log('🔍 AuthContext: No Firebase user, checking for new hire session');
+      checkNewHireSession();
+    } else {
+      console.log('🔍 AuthContext: Firebase user exists, loading complete');
+      setLoading(false);
+    }
 
     return unsubscribe;
   }, []);
 
   const isAdmin = userData?.role === 'admin';
   const isApproved = userData?.status === 'approved';
+  const isNewHire = newHireSession !== null;
+  const isMasterAdmin = userData?.email?.toLowerCase() === 'hashimosman@synergyhomecare.com';
 
   const value: AuthContextType = {
     currentUser,
     userData,
+    newHireSession,
     loading,
     login,
     register,
+    loginAsNewHire,
     logout,
     isAdmin,
     isApproved,
+    isNewHire,
+    isMasterAdmin,
     refreshUserData
   };
 

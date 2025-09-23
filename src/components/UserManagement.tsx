@@ -11,6 +11,17 @@ import {
   demoteFromAdmin,
   deleteUserCompletely
 } from '../lib/userService';
+import { 
+  getNewHires, 
+  addNewHire, 
+  updateNewHire, 
+  deleteNewHire, 
+  deactivateNewHire, 
+  reactivateNewHire, 
+  subscribeToNewHires,
+  type NewHire
+} from '../lib/newHireService';
+import AddNewHireModal from './modals/AddNewHireModal';
 import { User } from '../types';
 import { 
   Users, 
@@ -27,20 +38,28 @@ import {
   Calendar,
   Crown,
   Trash2,
-  UserMinus
+  UserMinus,
+  UserPlus,
+  Plus,
+  Edit3,
+  MapPin,
+  Briefcase
 } from 'lucide-react';
 
 const UserManagement: React.FC = () => {
   const { userData, isMasterAdmin } = useAuth();
   const [pendingUsers, setPendingUsers] = useState<User[]>([]);
   const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [newHires, setNewHires] = useState<NewHire[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'pending' | 'all'>('pending');
+  const [activeTab, setActiveTab] = useState<'pending' | 'all' | 'newhires'>('pending');
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'approved' | 'disabled'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [error, setError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [showAddNewHire, setShowAddNewHire] = useState(false);
+  const [editingNewHire, setEditingNewHire] = useState<NewHire | null>(null);
 
   // Real-time subscription to pending users
   useEffect(() => {
@@ -49,6 +68,17 @@ const UserManagement: React.FC = () => {
     const unsubscribe = subscribeToPendingUsers((users) => {
       setPendingUsers(users);
       setLoading(false);
+    });
+
+    return unsubscribe;
+  }, [userData]);
+
+  // Real-time subscription to new hires
+  useEffect(() => {
+    if (!userData?.role || userData.role !== 'admin') return;
+
+    const unsubscribe = subscribeToNewHires((hires) => {
+      setNewHires(hires);
     });
 
     return unsubscribe;
@@ -187,6 +217,77 @@ const UserManagement: React.FC = () => {
     }
   };
 
+  // New hire handlers
+  const handleAddNewHire = async (firstName: string, lastName: string, zipCode: string, occupation: string) => {
+    if (!userData?.id) return;
+    
+    setActionLoading('add-new-hire');
+    try {
+      await addNewHire(firstName, lastName, zipCode, occupation, userData.id);
+      setShowAddNewHire(false);
+      setError('');
+    } catch (error) {
+      console.error('Error adding new hire:', error);
+      setError('Failed to add new hire');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleUpdateNewHire = async (id: string, updates: Partial<NewHire>) => {
+    setActionLoading(id);
+    try {
+      await updateNewHire(id, updates);
+      setEditingNewHire(null);
+      setError('');
+    } catch (error) {
+      console.error('Error updating new hire:', error);
+      setError('Failed to update new hire');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDeactivateNewHire = async (id: string) => {
+    setActionLoading(id);
+    try {
+      await deactivateNewHire(id);
+      setError('');
+    } catch (error) {
+      console.error('Error deactivating new hire:', error);
+      setError('Failed to deactivate new hire');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleReactivateNewHire = async (id: string) => {
+    setActionLoading(id);
+    try {
+      await reactivateNewHire(id);
+      setError('');
+    } catch (error) {
+      console.error('Error reactivating new hire:', error);
+      setError('Failed to reactivate new hire');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDeleteNewHire = async (id: string) => {
+    setActionLoading(id);
+    try {
+      await deleteNewHire(id);
+      setConfirmDelete(null);
+      setError('');
+    } catch (error) {
+      console.error('Error deleting new hire:', error);
+      setError('Failed to delete new hire');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const getFilteredUsers = () => {
     let users = activeTab === 'pending' ? pendingUsers : allUsers;
     
@@ -204,6 +305,22 @@ const UserManagement: React.FC = () => {
     }
     
     return users;
+  };
+
+  const getFilteredNewHires = () => {
+    let hires = newHires;
+    
+    // Filter by search term
+    if (searchTerm) {
+      hires = hires.filter(hire => 
+        hire.firstName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        hire.lastName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        hire.occupation.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        hire.zipCode.includes(searchTerm)
+      );
+    }
+    
+    return hires;
   };
 
   const getStatusBadge = (status: string) => {
@@ -269,6 +386,7 @@ const UserManagement: React.FC = () => {
   }
 
   const filteredUsers = getFilteredUsers();
+  const filteredNewHires = getFilteredNewHires();
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -320,6 +438,24 @@ const UserManagement: React.FC = () => {
                 All Users
               </div>
             </button>
+            <button
+              onClick={() => setActiveTab('newhires')}
+              className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'newhires'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              <div className="flex items-center">
+                <UserPlus className="h-4 w-4 mr-2" />
+                New Hires
+                {newHires.filter(h => h.isActive).length > 0 && (
+                  <span className="ml-2 bg-green-100 text-green-600 text-xs font-medium px-2 py-0.5 rounded-full">
+                    {newHires.filter(h => h.isActive).length}
+                  </span>
+                )}
+              </div>
+            </button>
           </nav>
         </div>
       </div>
@@ -357,6 +493,18 @@ const UserManagement: React.FC = () => {
           )}
         </div>
 
+        {/* Add New Hire Button (only for new hires tab) */}
+        {activeTab === 'newhires' && (
+          <button
+            onClick={() => setShowAddNewHire(true)}
+            disabled={loading}
+            className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Add New Hire
+          </button>
+        )}
+
         {/* Refresh Button */}
         <button
           onClick={() => activeTab === 'all' ? loadAllUsers() : null}
@@ -368,12 +516,167 @@ const UserManagement: React.FC = () => {
         </button>
       </div>
 
-      {/* Users List */}
+      {/* Content Area */}
       {loading ? (
         <div className="text-center py-12">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading users...</p>
+          <p className="text-gray-600">Loading...</p>
         </div>
+      ) : activeTab === 'newhires' ? (
+        // New Hires Content
+        filteredNewHires.length === 0 ? (
+          <div className="text-center py-12">
+            <UserPlus className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+            <p className="text-gray-600">
+              {searchTerm ? 'No new hires found matching your search' : 'No new hires added yet'}
+            </p>
+            {!searchTerm && (
+              <button
+                onClick={() => setShowAddNewHire(true)}
+                className="mt-4 inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Add First New Hire
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="bg-white shadow-lg rounded-lg overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Name
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Occupation
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      ZIP Code
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Added
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Status
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {filteredNewHires.map((hire) => (
+                    <tr key={hire.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <div className="h-10 w-10 flex-shrink-0">
+                            <div className="h-10 w-10 rounded-full bg-gradient-to-br from-green-500 to-blue-500 flex items-center justify-center text-white font-medium">
+                              {hire.firstName.charAt(0).toUpperCase()}{hire.lastName.charAt(0).toUpperCase()}
+                            </div>
+                          </div>
+                          <div className="ml-4">
+                            <div className="text-sm font-medium text-gray-900">
+                              {hire.firstName} {hire.lastName}
+                            </div>
+                            {hire.lastAccessAt && (
+                              <div className="text-xs text-gray-500">
+                                Last accessed: {hire.lastAccessAt.toLocaleDateString()}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <Briefcase className="h-4 w-4 text-gray-400 mr-2" />
+                          <span className="text-sm text-gray-900">{hire.occupation}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <MapPin className="h-4 w-4 text-gray-400 mr-2" />
+                          <span className="text-sm text-gray-900">{hire.zipCode}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        <div className="flex items-center">
+                          <Calendar className="h-4 w-4 mr-1" />
+                          {hire.createdAt.toLocaleDateString()}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {hire.isActive ? (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            <CheckCircle className="h-3 w-3 mr-1" />
+                            Active
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                            <XCircle className="h-3 w-3 mr-1" />
+                            Inactive
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                        <div className="flex space-x-2 flex-wrap gap-1">
+                          {hire.isActive ? (
+                            <button
+                              onClick={() => handleDeactivateNewHire(hire.id)}
+                              disabled={actionLoading === hire.id}
+                              className="inline-flex items-center px-3 py-1 border border-transparent text-xs font-medium rounded text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50"
+                            >
+                              <UserX className="h-3 w-3 mr-1" />
+                              Deactivate
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleReactivateNewHire(hire.id)}
+                              disabled={actionLoading === hire.id}
+                              className="inline-flex items-center px-3 py-1 border border-transparent text-xs font-medium rounded text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50"
+                            >
+                              <UserCheck className="h-3 w-3 mr-1" />
+                              Reactivate
+                            </button>
+                          )}
+
+                          {/* Delete button with confirmation */}
+                          {confirmDelete === hire.id ? (
+                            <div className="flex space-x-1">
+                              <button
+                                onClick={() => handleDeleteNewHire(hire.id)}
+                                disabled={actionLoading === hire.id}
+                                className="inline-flex items-center px-2 py-1 border border-transparent text-xs font-medium rounded text-white bg-red-700 hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50"
+                              >
+                                Confirm
+                              </button>
+                              <button
+                                onClick={() => setConfirmDelete(null)}
+                                className="inline-flex items-center px-2 py-1 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => setConfirmDelete(hire.id)}
+                              disabled={actionLoading === hire.id}
+                              className="inline-flex items-center px-3 py-1 border border-transparent text-xs font-medium rounded text-white bg-red-700 hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50"
+                            >
+                              <Trash2 className="h-3 w-3 mr-1" />
+                              Delete
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
       ) : filteredUsers.length === 0 ? (
         <div className="text-center py-12">
           <Users className="h-12 w-12 text-gray-400 mx-auto mb-4" />
@@ -547,6 +850,14 @@ const UserManagement: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Add New Hire Modal */}
+      <AddNewHireModal
+        isOpen={showAddNewHire}
+        onClose={() => setShowAddNewHire(false)}
+        onAdd={handleAddNewHire}
+        loading={actionLoading === 'add-new-hire'}
+      />
     </div>
   );
 };

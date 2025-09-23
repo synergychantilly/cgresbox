@@ -513,10 +513,67 @@ export const webhookEventService = {
         isProcessed: false,
       });
 
-      // Find user document by submission ID or email
       const userEmail = payload.data.email;
+      
+      // Try to process as new hire first (since they don't have email accounts)
+      if (!userEmail || userEmail.includes('temp') || userEmail.includes('placeholder')) {
+        // This is likely a new hire submission - use name-based verification
+        const { newHireVerificationService } = await import('./newHireVerificationService');
+        const result = await newHireVerificationService.processNewHireWebhook(payload);
+        
+        if (result.success) {
+          console.log('New hire webhook processed successfully:', {
+            event: payload.event_type,
+            confidence: result.verification.confidence,
+            issues: result.verification.issues
+          });
+          return;
+        } else {
+          console.warn('New hire verification failed, attempting regular user processing');
+        }
+      }
+
+      // Process as regular user (existing logic)
       if (!userEmail) {
-        throw new Error('No email found in webhook payload');
+        throw new Error('No email found in webhook payload and new hire verification failed');
+      }
+
+      // Find user by email
+      const usersQuery = query(
+        collection(db, 'users'),
+        where('email', '==', userEmail.toLowerCase())
+      );
+      const usersSnapshot = await getDocs(usersQuery);
+      
+      if (usersSnapshot.empty) {
+        throw new Error(`No user found with email: ${userEmail}`);
+      }
+
+      const userId = usersSnapshot.docs[0].id;
+      const templateId = payload.data.template.id.toString();
+
+      // Find user document
+      const userDocQuery = query(
+        collection(db, USER_DOCUMENTS_COLLECTION),
+        where('userId', '==', userId),
+        where('documentTemplateId', '==', templateId)
+      );
+      const userDocSnapshot = await getDocs(userDocQuery);
+
+      let userDocumentId: string;
+      if (userDocSnapshot.empty) {
+        // Create new user document if it doesn't exist
+        const userData = usersSnapshot.docs[0].data();
+        userDocumentId = await this.createUserDocument({
+          userId,
+          userName: userData.name || userData.email,
+          documentTemplateId: templateId,
+          status: 'not_started',
+          docusealSubmissionId: payload.data.id.toString(),
+          webhookData: payload,
+        });
+      } else {
+        userDocumentId = userDocSnapshot.docs[0].id;
       }
 
       // Update user document status based on event type
@@ -539,6 +596,13 @@ export const webhookEventService = {
         case 'form.completed':
           status = 'completed';
           updateFields.completedAt = new Date(payload.timestamp);
+          if (payload.data.documents && payload.data.documents.length > 0) {
+            updateFields.completedDocumentUrl = payload.data.documents[0].url;
+            updateFields.completedDocumentName = payload.data.documents[0].name;
+          }
+          if (payload.data.audit_log_url) {
+            updateFields.auditLogUrl = payload.data.audit_log_url;
+          }
           break;
         case 'form.declined':
           status = 'declined';
@@ -551,10 +615,14 @@ export const webhookEventService = {
 
       updateFields.status = status;
 
-      // Find and update the user document
-      // This would require matching logic based on your DocuSeal integration
-      // For now, we'll log success
-      console.log('Webhook processed successfully:', payload.event_type);
+      // Update the user document
+      await this.updateStatus(userDocumentId, updateFields);
+
+      console.log('Webhook processed successfully:', {
+        event: payload.event_type,
+        user: userEmail,
+        status: status
+      });
 
     } catch (error) {
       console.error('Error processing webhook:', error);

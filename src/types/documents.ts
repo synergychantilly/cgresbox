@@ -48,6 +48,20 @@ export interface UserDocumentStatus {
   isManuallyCompleted?: boolean; // Flag to indicate manual completion by admin
   manuallyCompletedBy?: string; // Admin user ID who manually completed it
   manuallyCompletedAt?: Date; // When it was manually completed
+  // New hire verification fields
+  verificationData?: {
+    email?: string;
+    firstName?: string;
+    lastName?: string;
+    fullName?: string;
+    zipCode?: string;
+  };
+  verificationResult?: {
+    success: boolean;
+    confidence: 'high' | 'medium' | 'low';
+    issues: string[];
+  };
+  lastVerifiedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
