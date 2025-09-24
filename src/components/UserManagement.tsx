@@ -22,7 +22,6 @@ import {
   type NewHire
 } from '../lib/newHireService';
 import AddNewHireModal from './modals/AddNewHireModal';
-import ConvertNewHireModal from './modals/ConvertNewHireModal';
 import { User } from '../types';
 import { 
   Users, 
@@ -62,8 +61,6 @@ const UserManagement: React.FC = () => {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [showAddNewHire, setShowAddNewHire] = useState(false);
   const [editingNewHire, setEditingNewHire] = useState<NewHire | null>(null);
-  const [showConvertModal, setShowConvertModal] = useState(false);
-  const [convertingNewHire, setConvertingNewHire] = useState<NewHire | null>(null);
 
   // Real-time subscription to pending users
   useEffect(() => {
@@ -292,17 +289,7 @@ const UserManagement: React.FC = () => {
     }
   };
 
-  const handleConvertNewHire = (newHire: NewHire) => {
-    setConvertingNewHire(newHire);
-    setShowConvertModal(true);
-  };
 
-  const handleConversionSuccess = () => {
-    setShowConvertModal(false);
-    setConvertingNewHire(null);
-    setError('');
-    // Optionally show a success message or refresh data
-  };
 
   const getFilteredUsers = () => {
     let users = activeTab === 'pending' ? pendingUsers : allUsers;
@@ -887,13 +874,6 @@ const UserManagement: React.FC = () => {
         loading={actionLoading === 'add-new-hire'}
       />
 
-      {/* Convert New Hire Modal */}
-      <ConvertNewHireModal
-        isOpen={showConvertModal}
-        onClose={() => setShowConvertModal(false)}
-        newHire={convertingNewHire}
-        onSuccess={handleConversionSuccess}
-      />
     </div>
   );
 };
