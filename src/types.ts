@@ -146,6 +146,12 @@ export interface User {
   approvedAt?: Date;
   questionsAskedToday?: number;
   lastQuestionDate?: Date;
+  // New hire conversion fields
+  occupation?: string;
+  convertedFromNewHire?: boolean;
+  originalNewHireId?: string;
+  originalNewHireName?: string;
+  conversionDate?: Date;
 }
 
 // Re-export new type system

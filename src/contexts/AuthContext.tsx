@@ -20,6 +20,7 @@ import {
 import { auth, db } from '../lib/firebase';
 import { User } from '../types';
 import { NewHireSession, verifyNewHire, createNewHireSession, getNewHireSession } from '../lib/newHireService';
+import { convertNewHireToActiveUser } from '../lib/newHireConversionService';
 
 interface AuthContextType {
   currentUser: FirebaseUser | null;
@@ -135,7 +136,32 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         createdAt: serverTimestamp()
       });
 
-      setUserData(newUser);
+      // Check for new hire conversion
+      try {
+        console.log('🔄 Checking for new hire conversion during registration');
+        const conversionResult = await convertNewHireToActiveUser(email, result.user.uid, name);
+        
+        if (conversionResult.success && conversionResult.convertedFromNewHire) {
+          console.log('✅ New hire converted to active user:', {
+            originalNewHire: conversionResult.newHireData?.firstName + ' ' + conversionResult.newHireData?.lastName,
+            transferredDocuments: conversionResult.transferredDocuments
+          });
+          
+          // Refresh user data to include the updated information
+          const updatedUserData = await fetchUserData(result.user.uid);
+          if (updatedUserData) {
+            setUserData(updatedUserData);
+          } else {
+            setUserData(newUser);
+          }
+        } else {
+          setUserData(newUser);
+        }
+      } catch (conversionError) {
+        console.error('Error during new hire conversion:', conversionError);
+        // Don't fail registration if conversion fails
+        setUserData(newUser);
+      }
     } catch (error) {
       console.error('Registration error:', error);
       throw error;

@@ -22,6 +22,7 @@ import {
   type NewHire
 } from '../lib/newHireService';
 import AddNewHireModal from './modals/AddNewHireModal';
+import ConvertNewHireModal from './modals/ConvertNewHireModal';
 import { User } from '../types';
 import { 
   Users, 
@@ -43,7 +44,8 @@ import {
   Plus,
   Edit3,
   MapPin,
-  Briefcase
+  Briefcase,
+  Mail
 } from 'lucide-react';
 
 const UserManagement: React.FC = () => {
@@ -60,6 +62,8 @@ const UserManagement: React.FC = () => {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [showAddNewHire, setShowAddNewHire] = useState(false);
   const [editingNewHire, setEditingNewHire] = useState<NewHire | null>(null);
+  const [showConvertModal, setShowConvertModal] = useState(false);
+  const [convertingNewHire, setConvertingNewHire] = useState<NewHire | null>(null);
 
   // Real-time subscription to pending users
   useEffect(() => {
@@ -286,6 +290,18 @@ const UserManagement: React.FC = () => {
     } finally {
       setActionLoading(null);
     }
+  };
+
+  const handleConvertNewHire = (newHire: NewHire) => {
+    setConvertingNewHire(newHire);
+    setShowConvertModal(true);
+  };
+
+  const handleConversionSuccess = () => {
+    setShowConvertModal(false);
+    setConvertingNewHire(null);
+    setError('');
+    // Optionally show a success message or refresh data
   };
 
   const getFilteredUsers = () => {
@@ -621,6 +637,18 @@ const UserManagement: React.FC = () => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                         <div className="flex space-x-2 flex-wrap gap-1">
+                          {/* Convert to User button - only for active new hires */}
+                          {hire.isActive && (
+                            <button
+                              onClick={() => handleConvertNewHire(hire)}
+                              disabled={actionLoading === hire.id}
+                              className="inline-flex items-center px-3 py-1 border border-transparent text-xs font-medium rounded text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+                            >
+                              <Mail className="h-3 w-3 mr-1" />
+                              Convert to User
+                            </button>
+                          )}
+
                           {hire.isActive ? (
                             <button
                               onClick={() => handleDeactivateNewHire(hire.id)}
@@ -857,6 +885,14 @@ const UserManagement: React.FC = () => {
         onClose={() => setShowAddNewHire(false)}
         onAdd={handleAddNewHire}
         loading={actionLoading === 'add-new-hire'}
+      />
+
+      {/* Convert New Hire Modal */}
+      <ConvertNewHireModal
+        isOpen={showConvertModal}
+        onClose={() => setShowConvertModal(false)}
+        newHire={convertingNewHire}
+        onSuccess={handleConversionSuccess}
       />
     </div>
   );

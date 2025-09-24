@@ -62,6 +62,10 @@ export interface UserDocumentStatus {
     issues: string[];
   };
   lastVerifiedAt?: Date;
+  // New hire conversion fields
+  convertedFromNewHire?: boolean;
+  originalNewHireId?: string;
+  originalNewHireName?: string;
   createdAt: Date;
   updatedAt: Date;
 }

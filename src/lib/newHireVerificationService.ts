@@ -287,6 +287,36 @@ export const newHireVerificationService = {
   },
 
   /**
+   * Get new hire documents for conversion to active user
+   */
+  async getNewHireDocuments(newHireId: string): Promise<any[]> {
+    try {
+      const documentsQuery = query(
+        collection(db, 'userDocuments'),
+        where('userId', '==', newHireId)
+      );
+      
+      const snapshot = await getDocs(documentsQuery);
+      return snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        viewedAt: doc.data().viewedAt?.toDate(),
+        startedAt: doc.data().startedAt?.toDate(),
+        completedAt: doc.data().completedAt?.toDate(),
+        declinedAt: doc.data().declinedAt?.toDate(),
+        expiresAt: doc.data().expiresAt?.toDate(),
+        lastReminderSent: doc.data().lastReminderSent?.toDate(),
+        manuallyCompletedAt: doc.data().manuallyCompletedAt?.toDate(),
+        createdAt: doc.data().createdAt?.toDate(),
+        updatedAt: doc.data().updatedAt?.toDate(),
+      }));
+    } catch (error) {
+      console.error('Error getting new hire documents:', error);
+      return [];
+    }
+  },
+
+  /**
    * Get verification statistics for admin dashboard
    */
   async getVerificationStats(): Promise<{
@@ -307,3 +337,4 @@ export const newHireVerificationService = {
     };
   }
 };
+

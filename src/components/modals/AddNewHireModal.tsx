@@ -201,3 +201,4 @@ const AddNewHireModal: React.FC<AddNewHireModalProps> = ({
 };
 
 export default AddNewHireModal;
+
